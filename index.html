@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1d3a" />
+    <title>Berlin Mallu Santa 🎅</title>
+    <meta name="description" content="Secret Santa for the Berlin Mallus. Find out who you're gifting this Christmas!" />
+
+    <!-- WhatsApp / social link preview -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://berlinmallusanta.pages.dev/" />
+    <meta property="og:title" content="Berlin Mallu Santa 🎅" />
+    <meta property="og:description" content="Ho ho ho! Tap to find out who you're Secret Santa for this Christmas 🎁" />
+    <meta property="og:image" content="https://berlinmallusanta.pages.dev/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600&family=Mountains+of+Christmas:wght@700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <canvas id="snow" aria-hidden="true"></canvas>
+    <div class="lights" aria-hidden="true"></div>
+
+    <main id="app" aria-live="polite"></main>
+
+    <div class="scenery" aria-hidden="true">
+      <svg viewBox="0 0 400 90" preserveAspectRatio="xMidYMax slice">
+        <path d="M0 70 Q100 50 200 68 T400 62 V90 H0Z" fill="#eef4ff" />
+        <g fill="#146b3a">
+          <path d="M30 72 l18 -46 l18 46z" /><path d="M36 54 l12 -32 l12 32z" />
+          <path d="M330 70 l22 -56 l22 56z" /><path d="M337 48 l15 -38 l15 38z" />
+          <path d="M370 74 l14 -34 l14 34z" />
+        </g>
+        <g fill="#0f5530"><path d="M70 76 l12 -30 l12 30z" /><path d="M300 74 l10 -26 l10 26z" /></g>
+        <g fill="#f6c344"><circle cx="48" cy="24" r="3" /><circle cx="352" cy="12" r="3.5" /></g>
+        <g fill="#c8102e"><circle cx="42" cy="58" r="2.2" /><circle cx="56" cy="64" r="2.2" /><circle cx="345" cy="54" r="2.4" /><circle cx="360" cy="62" r="2.4" /></g>
+      </svg>
+    </div>
+
+    <div id="recaptcha" aria-hidden="true"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "name": "berlinmallusanta",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "preview": "npm run build && wrangler pages dev dist --d1 DB=berlinmallusanta --port 8788",
+    "db:migrate:local": "wrangler d1 migrations apply berlinmallusanta --local",
+    "db:migrate:remote": "wrangler d1 migrations apply berlinmallusanta --remote",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p functions"
+  },
+  "dependencies": {
+    "firebase": "^13.2.0",
+    "hono": "^4.13.17",
+    "jose": "^6.2.17"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261109.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.7",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.159.0"
+  }
+}

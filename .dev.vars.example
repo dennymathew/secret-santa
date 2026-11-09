@@ -1,0 +1,7 @@
+# Local development only. Copy to .dev.vars (git-ignored).
+# DEV_AUTH=1 enables fake sign-in (OTP 123456) and ONLY works on localhost.
+DEV_AUTH=1
+ADMIN_PHONES=+4915100000000
+UNSEAL_QUORUM=2
+# Any 32 random bytes, base64. Generate with: openssl rand -base64 32
+MATCH_KEY=REPLACE_WITH_openssl_rand_-base64_32

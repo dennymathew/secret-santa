@@ -1,0 +1,20 @@
+name = "berlinmallusanta"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "berlinmallusanta"
+# Replace with the id printed by `npx wrangler d1 create berlinmallusanta`
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[vars]
+# Your Firebase project id (Project settings → General)
+FIREBASE_PROJECT_ID = "berlinmallusanta"
+# ADMIN_PHONES (and optionally ADMIN_EMAILS) are set as secrets, so phone numbers stay out of git:
+#   npx wrangler pages secret put ADMIN_PHONES --project-name berlinmallusanta
+# After this moment the site is closed
+GAME_ENDS_AT = "2026-12-26T00:00:00+01:00"
+# Approvals needed before the admin can see all matches
+UNSEAL_QUORUM = "5"
