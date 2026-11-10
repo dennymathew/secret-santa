@@ -2,7 +2,7 @@
 # Sets the admin panel password. Only a PBKDF2 hash is stored; the password itself is never saved anywhere.
 #
 #   ./scripts/set-admin-password.sh            real site: stores the hash as the Cloudflare secret ADMIN_PASSWORD_HASH
-#   ./scripts/set-admin-password.sh --preview  test site: prints the hash to paste into the dashboard (Preview)
+#   ./scripts/set-admin-password.sh --preview  test site: stores it as the test site's (preview) secret
 #   ./scripts/set-admin-password.sh --local    local dev: writes the hash into .dev.vars
 #
 # Changing the password logs out everyone who has the admin panel open.
@@ -27,16 +27,12 @@ unset PW PW2
 
 case "$MODE" in
   production)
-    printf '%s' "$HASH" | npx wrangler pages secret put ADMIN_PASSWORD_HASH --project-name "$PROJECT" >/dev/null
+    printf '%s' "$HASH" | npx wrangler pages secret put ADMIN_PASSWORD_HASH --project-name "$PROJECT" --env production >/dev/null
     echo "✅ Admin password set for the real site ('$PROJECT'). Redeploy so it's picked up."
     ;;
   --preview)
-    echo "Paste this as a SECRET named ADMIN_PASSWORD_HASH in the Cloudflare dashboard:"
-    echo "  Workers & Pages → $PROJECT → Settings → Variables and Secrets → Preview → Add → Secret"
-    echo
-    echo "$HASH"
-    echo
-    echo "(This is only a hash. The password itself can't be read back from it.)"
+    printf '%s' "$HASH" | npx wrangler pages secret put ADMIN_PASSWORD_HASH --project-name "$PROJECT" --env preview >/dev/null
+    echo "✅ Admin password set for the test site ('$PROJECT', preview). Push to the test branch so it's picked up."
     ;;
   --local)
     touch .dev.vars

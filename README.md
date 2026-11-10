@@ -69,7 +69,7 @@ Then, in the Cloudflare dashboard, go to *Workers & Pages → Create → Pages �
 
 Then set the secrets:
 ```bash
-npx wrangler pages secret put ADMIN_PHONES --project-name berlinmallusanta   # your number, e.g. +4915112345678
+npx wrangler pages secret put ADMIN_PHONES --project-name berlinmallusanta --env production   # your number, e.g. +4915112345678
 ./scripts/set-match-key.sh                                                   # seals the matches; the key is never shown
 ./scripts/set-admin-password.sh                                              # the admin panel password (only a hash is stored)
 ```
@@ -84,10 +84,11 @@ Every Pages **preview** deployment (any branch except `main`) is the test site. 
 ```bash
 npx wrangler d1 create berlinmallusanta-test        # copy the database_id into [[env.preview.d1_databases]] in wrangler.toml
 npx wrangler d1 migrations apply berlinmallusanta-test --remote --env preview
-./scripts/set-match-key.sh --preview                # prints a key to paste (test site only)
-./scripts/set-admin-password.sh --preview           # prints a hash to paste
+./scripts/set-match-key.sh --preview                # the test site's own key (never shown)
+./scripts/set-admin-password.sh --preview           # the test site's admin password
+npx wrangler pages secret put ADMIN_PHONES --project-name berlinmallusanta --env preview
 ```
-In the dashboard, open *Workers & Pages → berlinmallusanta → Settings → Variables and Secrets*, choose **Preview**, and add the secrets `MATCH_KEY`, `ADMIN_PASSWORD_HASH` and `ADMIN_PHONES` (this wrangler version can only set production secrets from the command line). Then:
+Then:
 ```bash
 git switch -c test && git push -u origin test
 ```
