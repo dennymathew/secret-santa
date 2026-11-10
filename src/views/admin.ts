@@ -147,9 +147,14 @@ export async function adminView() {
   const savedText = draftText(draftFromSaved(list.participants, list.exclusions));
   const editor = started
     ? null
-    : mountListEditor($('#editor'), draftFromSaved(list.participants, list.exclusions), (d) => {
-        $('#dirty').hidden = draftText(d) === savedText;
-      });
+    : mountListEditor(
+        $('#editor'),
+        draftFromSaved(list.participants, list.exclusions),
+        (d) => {
+          $('#dirty').hidden = draftText(d) === savedText;
+        },
+        () => saveList(),
+      );
 
   on('#copy', 'click', async () => {
     await navigator.clipboard?.writeText(shareUrl).catch(() => {});
@@ -159,7 +164,7 @@ export async function adminView() {
   on('#home', 'click', () => go('#/home'));
   on('#refresh', 'click', () => adminView());
 
-  on('#save', 'click', async () => {
+  async function saveList() {
     $('#save-err').hidden = true;
     const d = editor!.get();
     const rows = draftRows(d);
@@ -167,11 +172,13 @@ export async function adminView() {
       await busy($<HTMLButtonElement>('#save'), 'Saving…', () =>
         api('/admin/participants', { body: { participants: rows.map(({ name, email, family, kid }) => ({ name, email: email || null, family, kid })), exclusions: d.exclusions } }),
       );
-      adminView();
+      adminView(); // reloads the saved list into the families and the raw sheet
     } catch (e) {
       showError('#save-err', e);
+      $('#save-err').scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
-  });
+  }
+  on('#save', 'click', () => saveList());
 
   on('#start', 'click', async () => {
     if (!$('#dirty').hidden) return showError('#start-err', new Error('Save the list first: the draw uses the saved list.'));
