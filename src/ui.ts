@@ -24,6 +24,12 @@ export const go = (hash: string) => {
   else location.hash = hash;
 };
 
+/** Like go(), but replaces the current history entry (for redirects), so Back doesn't land on it again. */
+export const redirect = (hash: string) => {
+  if (location.hash === hash) window.dispatchEvent(new HashChangeEvent('hashchange'));
+  else location.replace(hash);
+};
+
 export const spinner = () => render('<div class="spinner" role="status" aria-label="Loading"></div>');
 
 export function logo(sub = '') {

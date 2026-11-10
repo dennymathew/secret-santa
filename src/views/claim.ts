@@ -1,4 +1,4 @@
-import { logo, render, esc, go, spinner, $, showError } from '../ui';
+import { logo, render, esc, go, spinner, $, showError, redirect } from '../ui';
 import { api } from '../api';
 import { signOut } from '../auth';
 
@@ -8,7 +8,7 @@ export async function claimView() {
     '/google/candidates',
     { method: 'POST', body: {} },
   );
-  if (data.claimed) return go('#/home');
+  if (data.claimed) return redirect('#/home');
 
   const list = data.candidates;
   const body =
@@ -45,7 +45,7 @@ export async function claimView() {
       try {
         b.disabled = true;
         await api('/google/claim', { body: { id: Number(b.dataset.id) } });
-        go('#/home');
+        redirect('#/home');
       } catch (e) {
         b.disabled = false;
         showError('#err', e);

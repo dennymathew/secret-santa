@@ -1,8 +1,8 @@
 import './styles.css';
 import { startSnow, buildLights } from './effects/snow';
-import { initAuth, isSignedIn, signOut } from './auth';
+import { initAuth, isSignedIn, signOut, TEST_SITE } from './auth';
 import { ApiError } from './api';
-import { render, logo, esc, go, spinner, on } from './ui';
+import { render, logo, esc, redirect, spinner, on } from './ui';
 import { welcomeView } from './views/welcome';
 import { verifyView } from './views/verify';
 import { claimView } from './views/claim';
@@ -28,13 +28,13 @@ async function route() {
   const name = location.hash.replace(/^#\/?/, '').split('?')[0];
   const r = routes[name] ?? routes[''];
   try {
-    if (r.auth && !(await isSignedIn())) return go('#/verify');
-    if (name === 'verify' && (await isSignedIn())) return go('#/home');
+    if (r.auth && !(await isSignedIn())) return redirect('#/verify');
+    if (name === 'verify' && (await isSignedIn())) return redirect('#/home');
     await r.view();
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
       await signOut();
-      return go('#/verify');
+      return redirect('#/verify');
     }
     if (e instanceof ApiError && e.closed) {
       render(`${logo()}<section class="card festive center"><span class="big-emoji wiggle">🎄</span><h2>Merry Christmas!</h2><p>Secret Santa is over for this year. See you next December! ⛄</p></section>`);
@@ -48,6 +48,10 @@ async function route() {
 (async () => {
   spinner();
   await initAuth().catch((e) => console.error(e));
+  if (TEST_SITE) {
+    document.title = '🧪 TEST · ' + document.title;
+    document.body.insertAdjacentHTML('beforeend', '<div class="test-banner" role="status">🧪 TEST SITE · code 123456 · not the real game</div>');
+  }
   if (sessionStorage.getItem('bms-after-google') && (await isSignedIn())) {
     sessionStorage.removeItem('bms-after-google');
     if (!location.hash.startsWith('#/home')) location.hash = '#/home';
