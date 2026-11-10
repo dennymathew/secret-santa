@@ -6,12 +6,12 @@ compatibility_date = "2026-11-01"
 binding = "DB"
 database_name = "berlinmallusanta"
 # Replace with the id printed by `npx wrangler d1 create berlinmallusanta`
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "fbb3ecc8-77e6-4f32-bb99-9f8a508d6377"
 migrations_dir = "migrations"
 
 [vars]
 # Your Firebase project id (Project settings → General)
-FIREBASE_PROJECT_ID = "berlinmallusanta"
+FIREBASE_PROJECT_ID = "secretsantaberlinmallus"
 # ADMIN_PHONES (and optionally ADMIN_EMAILS) are set as secrets, so phone numbers stay out of git:
 #   npx wrangler pages secret put ADMIN_PHONES --project-name berlinmallusanta
 # After this moment the site is closed
@@ -33,11 +33,11 @@ UNSEAL_QUORUM = "5"
 binding = "DB"
 database_name = "berlinmallusanta-test"
 # Replace with the id printed by `npx wrangler d1 create berlinmallusanta-test`
-database_id = "00000000-0000-0000-0000-000000000001"
+database_id = "f652cb05-13e5-464f-8cbc-ef1a69f2b5b0"
 migrations_dir = "migrations"
 
 [env.preview.vars]
 TEST_MODE = "1"
-FIREBASE_PROJECT_ID = "berlinmallusanta"
+FIREBASE_PROJECT_ID = "secretsantaberlinmallus"
 GAME_ENDS_AT = "2026-12-26T00:00:00+01:00"
 UNSEAL_QUORUM = "5"

@@ -85,7 +85,7 @@ Redeploy (*Deployments → Retry*), so the new secrets are picked up.
 Every Pages **preview** deployment (any branch except `main`) is the test site. It uses its own database, `berlinmallusanta-test`, and every listed number signs in with code **123456**. Test mode can't switch on for `main`, even by mistake.
 ```bash
 npx wrangler d1 create berlinmallusanta-test        # copy the database_id into [[env.preview.d1_databases]] in wrangler.toml
-npx wrangler d1 migrations apply berlinmallusanta-test --remote
+npx wrangler d1 migrations apply berlinmallusanta-test --remote --env preview
 ./scripts/set-match-key.sh --preview                # prints a key to paste (test site only)
 ./scripts/set-admin-password.sh --preview           # prints a hash to paste
 ```
