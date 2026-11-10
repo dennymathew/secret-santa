@@ -50,7 +50,7 @@ async function route() {
   await initAuth().catch((e) => console.error(e));
   if (TEST_SITE) {
     document.title = '🧪 TEST · ' + document.title;
-    document.body.insertAdjacentHTML('beforeend', '<div class="test-banner" role="status">🧪 TEST SITE · code 123456 · not the real game</div>');
+    document.body.insertAdjacentHTML('beforeend', '<div class="test-banner" role="status">🧪 TEST SITE · fake Google sign-in · not the real game</div>');
   }
   if (sessionStorage.getItem('bms-after-google') && (await isSignedIn())) {
     sessionStorage.removeItem('bms-after-google');

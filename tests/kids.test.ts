@@ -59,7 +59,7 @@ describe('admin list format', () => {
     expect(exclusions).toEqual([['Anu', 'Chinnu']]);
   });
 
-  it('reads kids without phones', () => {
+  it('reads kids (no email, they never sign in)', () => {
     const { rows } = parseList(SAMPLE_LIST);
     const kids = rows.filter((r) => r.kid);
     expect(kids.map((k) => [k.name, k.family])).toEqual([
@@ -78,10 +78,10 @@ describe('admin list format', () => {
 
   it('round-trips through formatList', () => {
     const { rows, exclusions } = parseList(SAMPLE_LIST);
-    const saved = rows.map((r) => ({ name: r.name, phone_e164: r.e164, family: r.family, is_kid: r.kid ? 1 : 0 }));
+    const saved = rows.map((r) => ({ name: r.name, email: r.email || null, family: r.family, is_kid: r.kid ? 1 : 0 }));
     const again = parseList(formatList(saved, exclusions.map(([a, b]) => ({ a, b }))));
-    const key = (r: { name: string; family: string | null; kid: boolean; e164: string | null }) =>
-      JSON.stringify([r.name, r.family, r.kid, r.e164]);
+    const key = (r: { name: string; family: string | null; kid: boolean; email: string }) =>
+      JSON.stringify([r.name, r.family, r.kid, r.email]);
     expect(again.rows.map(key).sort()).toEqual(rows.map(key).sort());
     expect(again.exclusions).toEqual(exclusions);
   });

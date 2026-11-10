@@ -2,18 +2,17 @@ import { Hono, type Context } from 'hono';
 import { handle } from 'hono/cloudflare-pages';
 import type { Env, Identity, Participant } from '../lib/types';
 import { verifyIdentity, isTestMode } from '../lib/auth';
-import { listFromEnv, normalizePhone } from '../lib/phone';
 import { drawPoolsSafe, DrawError, type Relaxation } from '../lib/draw';
 import { getKey, seal, unseal } from '../lib/crypto';
-import { findCandidates, maskEmail } from '../lib/nameMatch';
+import { matchSignIn, maskEmail, isEmail, listFromEnv } from '../lib/nameMatch';
 import { identityKey, signSession, verifySession, verifyPassword } from '../lib/adminAuth';
 
 type Who = {
   identity: Identity;
-  /** "phone:+49…" or "google:email" */
+  /** "google:email" */
   idKey: string;
   participant: Participant | null;
-  /** On ADMIN_PHONES / ADMIN_EMAILS: may sign in even when not on the list (needed to paste the first list). */
+  /** On ADMIN_EMAILS: may sign in even when not on the list (needed to paste the first list). */
   organizer: boolean;
   /** Has a valid admin session (unlocked with the admin password). */
   isAdmin: boolean;
@@ -51,23 +50,8 @@ app.use('*', async (c, next) => {
 });
 
 // ---------- Public ----------
-// The frontend asks this on load: on the test site it skips Firebase and uses code 123456.
+// The frontend asks this on load: on the test site it skips Firebase and uses a fake Google sign-in.
 app.get('/config', (c) => c.json({ testMode: isTestMode(c.env) }));
-
-app.post('/check-phone', async (c) => {
-  const { phone } = await c.req.json<{ phone?: string }>().catch(() => ({ phone: '' }));
-  const p = normalizePhone(phone ?? '');
-  if (!p) return c.json({ ok: false, error: 'Please enter a German (+49) or Indian (+91) mobile number.' });
-  const isAdmin = listFromEnv(c.env.ADMIN_PHONES).includes(p);
-  const row = await c.env.DB.prepare('SELECT 1 FROM participants WHERE phone_e164 = ?').bind(p).first();
-  // Numbers that aren't on the list never reach Firebase, so no SMS is ever sent to them.
-  if (!row && !isAdmin)
-    return c.json({
-      ok: false,
-      error: "🎅 Santa can't find this number on the official Berlin Mallu list, so no SMS was sent. Ask the admin to add you.",
-    });
-  return c.json({ ok: true, phone: p });
-});
 
 // ---------- Authentication ----------
 app.use('*', async (c, next) => {
@@ -75,19 +59,12 @@ app.use('*', async (c, next) => {
   const identity = await verifyIdentity(token, c.env, new URL(c.req.url).host);
   if (!identity) return c.json({ error: 'Please sign in again.' }, 401);
 
-  let participant: Participant | null = null;
-  let organizer = false;
-  if (identity.kind === 'phone') {
-    participant = await c.env.DB.prepare('SELECT * FROM participants WHERE phone_e164 = ?')
-      .bind(identity.phone)
-      .first<Participant>();
-    organizer = listFromEnv(c.env.ADMIN_PHONES).includes(identity.phone);
-  } else {
-    participant = await c.env.DB.prepare('SELECT * FROM participants WHERE google_email = ?')
-      .bind(identity.email)
-      .first<Participant>();
-    organizer = listFromEnv(c.env.ADMIN_EMAILS).map((e) => e.toLowerCase()).includes(identity.email);
-  }
+  // The verified Google email is the only key. It is on the list either because the admin typed it in,
+  // or because this person linked it once by name (see /google/claim).
+  const participant = await c.env.DB.prepare('SELECT * FROM participants WHERE google_email = ?')
+    .bind(identity.email)
+    .first<Participant>();
+  const organizer = listFromEnv(c.env.ADMIN_EMAILS).includes(identity.email);
   const idKey = identityKey(identity);
   // Admin = a valid session from POST /admin/login, for this exact person and the current password.
   const isAdmin =
@@ -97,54 +74,56 @@ app.use('*', async (c, next) => {
   await next();
 });
 
-/** Has this participant ever unlocked the admin panel (with their phone or their Google account)? */
+/** Has this participant ever unlocked the admin panel? */
 async function everUnlockedAdmin(db: D1Database, p: Participant | null, idKey: string): Promise<boolean> {
-  const keys = [idKey, p?.phone_e164 ? `phone:${p.phone_e164}` : '', p?.google_email ? `google:${p.google_email}` : ''];
+  const keys = [idKey, p?.google_email ? `google:${p.google_email}` : ''];
   const row = await db
-    .prepare('SELECT 1 FROM admin_logins WHERE ok = 1 AND identity IN (?, ?, ?) LIMIT 1')
+    .prepare('SELECT 1 FROM admin_logins WHERE ok = 1 AND identity IN (?, ?) LIMIT 1')
     .bind(...keys)
     .first();
   return !!row;
 }
 
-// ---------- Google fallback: find yourself and claim ----------
-app.post('/google/candidates', async (c) => {
-  const { identity, participant } = c.get('who');
-  if (identity.kind !== 'google') return c.json({ error: 'Google sign-in only.' }, 400);
-  if (participant) return c.json({ claimed: true, candidates: [] });
-  const { results } = await c.env.DB.prepare('SELECT id, name, google_email FROM participants WHERE is_kid = 0').all<{
-    id: number;
-    name: string;
-    google_email: string | null;
-  }>();
-  const candidates = findCandidates(identity.name, results).map((p) => ({
-    id: p.id,
-    name: p.name,
-    taken: !!p.google_email,
-  }));
-  return c.json({ claimed: false, googleName: identity.name, candidates });
+// ---------- Not linked yet: find yourself by name ----------
+async function adults(db: D1Database) {
+  const { results } = await db
+    .prepare('SELECT id, name, google_email FROM participants WHERE is_kid = 0')
+    .all<{ id: number; name: string; google_email: string | null }>();
+  return results;
+}
+
+/** What the claim screen shows: one person to confirm, or why Santa can't find you. */
+app.post('/google/match', async (c) => {
+  const { identity, participant, organizer } = c.get('who');
+  if (participant) return c.json({ claimed: true });
+  const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB));
+  return c.json({
+    claimed: false,
+    googleName: identity.name,
+    organizer,
+    result: m.kind,
+    candidate: m.kind === 'name' || m.kind === 'taken' ? { id: m.p.id, name: m.p.name } : null,
+  });
 });
 
 app.post('/google/claim', async (c) => {
   const { identity, participant } = c.get('who');
-  if (identity.kind !== 'google') return c.json({ error: 'Google sign-in only.' }, 400);
   if (participant) return c.json({ ok: true });
   const { id } = await c.req.json<{ id?: number }>().catch(() => ({ id: undefined }));
-  const target = await c.env.DB.prepare('SELECT * FROM participants WHERE id = ? AND is_kid = 0')
-    .bind(Number(id))
-    .first<Participant>();
-  if (!target) return c.json({ error: 'Person not found.' }, 404);
-  if (!findCandidates(identity.name, [target]).length)
-    return c.json({ error: "Your Google name doesn't match this person." }, 403);
-  // Lock only if still unclaimed (atomic)
+  // Decided again on the server: only a single, unlinked name match can be claimed.
+  const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB));
+  if (m.kind === 'taken') return c.json({ error: `${m.p.name} is already linked to another Google account. Ask the admin.` }, 409);
+  if (m.kind !== 'name' || m.p.id !== Number(id))
+    return c.json({ error: "🎅 Santa can't match your Google account to the list. Ask the admin to add your email." }, 403);
+  // Lock only if still unclaimed (atomic): first come, first served.
   const res = await c.env.DB.prepare(
     'UPDATE participants SET google_email = ?, google_claimed_at = ? WHERE id = ? AND google_email IS NULL',
   )
-    .bind(identity.email, now(), target.id)
+    .bind(identity.email, now(), m.p.id)
     .run();
   if (!res.meta.changes)
-    return c.json({ error: `${target.name} is already linked to another Google account. Ask the admin.` }, 409);
-  await logEvent(c.env.DB, 'google_claimed', target.name, maskEmail(identity.email));
+    return c.json({ error: `${m.p.name} is already linked to another Google account. Ask the admin.` }, 409);
+  await logEvent(c.env.DB, 'google_claimed', m.p.name, maskEmail(identity.email));
   return c.json({ ok: true });
 });
 
@@ -172,7 +151,7 @@ app.get('/me', async (c) => {
     participant: participant
       ? { id: participant.id, name: participant.name, revealedAt: participant.revealed_at }
       : null,
-    needsClaim: identity.kind === 'google' && !participant,
+    needsClaim: !participant,
     game: { status: game.status, startedAt: game.started_at, endsAt: endsAt(c.env) },
   });
 });
@@ -235,7 +214,7 @@ async function unsealState(env: Env) {
     `SELECT p.id, p.name, a.approved_at FROM unseal_approvals a JOIN participants p ON p.id = a.participant_id
      WHERE a.request_id = ?
        AND NOT EXISTS (SELECT 1 FROM admin_logins l WHERE l.ok = 1
-                       AND (l.identity = 'phone:' || p.phone_e164 OR l.identity = 'google:' || p.google_email))
+                       AND l.identity = 'google:' || p.google_email)
      ORDER BY a.approved_at`,
   )
     .bind(req.id)
@@ -368,7 +347,7 @@ admin.post('/reset', async (c) => {
 });
 
 interface ImportBody {
-  participants: Array<{ name: string; phone?: string | null; family?: string | null; kid?: boolean }>;
+  participants: Array<{ name: string; email?: string | null; family?: string | null; kid?: boolean }>;
   exclusions?: Array<[string, string]>;
 }
 
@@ -379,27 +358,27 @@ admin.post('/participants', async (c) => {
   if (!body?.participants?.length) return c.json({ error: 'No participants given.' }, 400);
 
   const errors: string[] = [];
-  const seenPhones = new Set<string>();
+  const seenEmails = new Set<string>();
   const seenNames = new Set<string>();
   const rows = body.participants.map((p, i) => {
     const name = (p.name ?? '').trim();
     const kid = !!p.kid;
     const family = (p.family ?? '').trim() || null;
-    const phone = kid ? null : normalizePhone(p.phone ?? '');
+    const email = kid ? null : (p.email ?? '').trim().toLowerCase() || null;
     const label = `Row ${i + 1}${name ? ` (${name})` : ''}`;
     if (!name) errors.push(`${label}: name is missing.`);
-    if (!kid && !phone) errors.push(`${label}: "${p.phone ?? ''}" isn't a valid +49 or +91 mobile number.`);
+    if (email && !isEmail(email)) errors.push(`${label}: "${email}" isn't a valid email address.`);
     if (kid && !family) errors.push(`${label}: kids must be listed under a family, so their parents can open their envelope.`);
-    if (phone && seenPhones.has(phone)) errors.push(`${label}: duplicate phone number.`);
+    if (email && seenEmails.has(email)) errors.push(`${label}: duplicate email.`);
     if (name && seenNames.has(name.toLowerCase())) errors.push(`${label}: duplicate name. Add a surname or initial.`);
-    if (phone) seenPhones.add(phone);
+    if (email) seenEmails.add(email);
     seenNames.add(name.toLowerCase());
-    return { name, phone, family, kid };
+    return { name, email, family, kid };
   });
   const adultFamilies = new Set(rows.filter((r) => !r.kid && r.family).map((r) => r.family!.toLowerCase()));
   for (const r of rows)
     if (r.kid && r.family && !adultFamilies.has(r.family.toLowerCase()))
-      errors.push(`${r.name}: family "${r.family}" has no adult with a phone number to open the envelope.`);
+      errors.push(`${r.name}: family "${r.family}" has no adult to open the envelope.`);
   const byName = new Map(rows.map((r) => [r.name.toLowerCase(), r]));
   for (const [a, b] of body.exclusions ?? []) {
     const ra = byName.get(a.trim().toLowerCase());
@@ -413,18 +392,30 @@ admin.post('/participants', async (c) => {
   if (kidCount === 1) errors.push("There's only 1 kid, so they have nobody to swap gifts with. Add another kid, or list them as an adult.");
   if (errors.length) return c.json({ error: 'Please fix the list.', details: errors }, 400);
 
-  const admins = listFromEnv(c.env.ADMIN_PHONES);
   const db = c.env.DB;
+  // Keep Google accounts people already linked by name, so a list edit doesn't make them link again.
+  // An email typed into the list always wins.
+  const { results: old } = await db
+    .prepare('SELECT name, google_email, google_claimed_at FROM participants WHERE is_kid = 0 AND google_email IS NOT NULL')
+    .all<{ name: string; google_email: string; google_claimed_at: string | null }>();
+  const oldLink = new Map(old.map((o) => [o.name.toLowerCase(), o]));
+  const final = rows.map((r) => {
+    if (r.kid || r.email) return { ...r, claimedAt: null as string | null };
+    const o = oldLink.get(r.name.toLowerCase());
+    return o && !seenEmails.has(o.google_email.toLowerCase())
+      ? { ...r, email: o.google_email, claimedAt: o.google_claimed_at }
+      : { ...r, claimedAt: null };
+  });
   await db.batch([
     db.prepare('DELETE FROM unseal_approvals'),
     db.prepare('DELETE FROM unseal_requests'),
     db.prepare('DELETE FROM assignments'),
     db.prepare('DELETE FROM exclusions'),
     db.prepare('DELETE FROM participants'),
-    ...rows.map((r) =>
+    ...final.map((r) =>
       db
-        .prepare('INSERT INTO participants (name, phone_e164, family, is_kid, is_admin) VALUES (?, ?, ?, ?, ?)')
-        .bind(r.name, r.phone, r.family, r.kid ? 1 : 0, r.phone && admins.includes(r.phone) ? 1 : 0),
+        .prepare('INSERT INTO participants (name, google_email, google_claimed_at, family, is_kid) VALUES (?, ?, ?, ?, ?)')
+        .bind(r.name, r.email, r.claimedAt, r.family, r.kid ? 1 : 0),
     ),
   ]);
   const { results: saved } = await db.prepare('SELECT id, name FROM participants').all<{ id: number; name: string }>();
@@ -436,9 +427,9 @@ admin.post('/participants', async (c) => {
 });
 
 admin.get('/participants', async (c) => {
-  // Phones and families are needed by the admin to check the list. Matches are never included.
+  // Emails and families are needed by the admin to check the list. Matches are never included.
   const { results: people } = await c.env.DB.prepare(
-    'SELECT id, name, phone_e164, family, is_kid FROM participants ORDER BY id',
+    'SELECT id, name, google_email AS email, google_claimed_at AS claimed_at, family, is_kid FROM participants ORDER BY id',
   ).all();
   const { results: ex } = await c.env.DB.prepare(
     `SELECT a.name AS a, b.name AS b FROM exclusions e

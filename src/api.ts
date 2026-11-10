@@ -31,10 +31,10 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 }
 
 export interface Me {
-  signedInWith: 'phone' | 'google';
+  signedInWith: 'google';
   /** Unlocked the admin panel with the password (valid admin session). */
   isAdmin: boolean;
-  /** On ADMIN_PHONES / ADMIN_EMAILS: may sign in without being on the list. */
+  /** On ADMIN_EMAILS: may sign in without being on the list. */
   organizer: boolean;
   /** Has unlocked the admin panel at some point, so can't approve an unseal. */
   adminEver: boolean;

@@ -2,14 +2,14 @@ import { logo, render, esc, go, on, $, busy, showError, spinner } from '../ui';
 import { api, ApiError, type Board, type Me } from '../api';
 import { ADMIN_KEY } from '../auth';
 import { unsealPanel } from './board';
-import { parseList, rowProblem, formatList, SAMPLE_LIST } from '../listParser';
+import { mountListEditor, draftFromSaved, draftRows, draftText } from './listEditor';
 
 export async function adminView() {
   spinner();
   const me = await api<Me>('/me');
   if (!me.isAdmin) return lockScreen(me);
   const [list, board] = await Promise.all([
-    api<{ participants: Array<{ id: number; name: string; phone_e164: string | null; family: string | null; is_kid: number }>; exclusions: Array<{ a: string; b: string }> }>('/admin/participants'),
+    api<{ participants: Array<{ id: number; name: string; email: string | null; family: string | null; is_kid: number }>; exclusions: Array<{ a: string; b: string }> }>('/admin/participants'),
     api<Board>('/board'),
   ]);
   const draft = me.game.status !== 'started';
@@ -19,8 +19,7 @@ export async function adminView() {
       : null;
   const started = me.game.status === 'started';
   const shareUrl = location.origin + '/';
-  const text = list.participants.length ? formatList(list.participants, list.exclusions) : SAMPLE_LIST;
-  const waText = encodeURIComponent(`🎅 Ho ho ho, Berlin Mallus! Secret Santa is live. Open the link, verify your number and find out who you're gifting 🎁\n${shareUrl}`);
+  const waText = encodeURIComponent(`🎅 Ho ho ho, Berlin Mallus! Secret Santa is live. Open the link, sign in with Google and find out who you're gifting 🎁\n${shareUrl}`);
   const done = board.participants.filter((p) => p.revealed).length;
 
   render(`
@@ -44,13 +43,13 @@ export async function adminView() {
         ? ''
         : `<section class="card">
       <h2>1. Participants</h2>
-      <p class="muted">Start each family with <b># Family: any name</b>. Everyone below it is one family, whatever their surnames, and family members never get each other.
-        Adults: <b>Name, Phone</b> (+49 or +91). Kids: <b>Kid: Name</b> with no phone. Their parents open their envelope, and kids only draw kids.
-        <b># Single</b> is for people with no family here. Lines starting with <b>!</b> are extra "never match" pairs.</p>
-      <textarea id="list" spellcheck="false" autocapitalize="off">${esc(text)}</textarea>
-      <div class="table-wrap" id="preview" style="margin-top:12px"></div>
+      <p class="muted">Add each family, then its adults and kids. Family members never get each other, whatever their surnames.
+        Adults can sign in with Google: add their <b>Gmail address</b> to recognise them for sure, or leave it empty and Santa matches their <b>Google name</b>, so write the name they use on Google.
+        Kids never sign in: their parents open their envelope, and kids only draw kids.</p>
+      <div id="editor"></div>
       <p class="error" id="save-err" hidden></p>
       <div class="stack" style="margin-top:12px">
+        <p class="dirty" id="dirty" hidden>✏️ Unsaved changes</p>
         <button class="btn green" id="save">Save list 💾</button>
       </div>
     </section>
@@ -144,25 +143,13 @@ export async function adminView() {
     go(me.participant ? '#/home' : '#/');
   });
 
-  const preview = () => {
-    const { rows, exclusions } = parseList($<HTMLTextAreaElement>('#list').value);
-    const families = new Set(rows.map((r) => r.family?.toLowerCase()).filter(Boolean)).size;
-    const kids = rows.filter((r) => r.kid).length;
-    const cell = (r: (typeof rows)[number]) => (r.kid ? '🧒 kid' : r.e164 ? esc(r.e164) : `⚠️ ${esc(r.phone || 'missing')}`);
-    $('#preview').innerHTML = `<table><thead><tr><th>Family</th><th>Name</th><th>Phone</th></tr></thead><tbody>
-      ${rows
-        .map((r) => {
-          const problem = rowProblem(r, rows);
-          return `<tr class="${problem ? 'bad' : ''}"><td>${esc(r.family ?? '–')}</td><td>${esc(r.name)}${problem ? `<br><small>⚠️ ${esc(problem)}</small>` : ''}</td><td>${cell(r)}</td></tr>`;
-        })
-        .join('')}
-      </tbody></table>
-      <p class="muted" style="padding:0 10px">${rows.length - kids} adults · ${kids} kids · ${families} families · ${exclusions.length} extra pairs</p>`;
-  };
-  if (!started) {
-    preview();
-    on('#list', 'input', preview);
-  }
+  // The list editor (families → adults/kids, never-match pairs, raw sheet).
+  const savedText = draftText(draftFromSaved(list.participants, list.exclusions));
+  const editor = started
+    ? null
+    : mountListEditor($('#editor'), draftFromSaved(list.participants, list.exclusions), (d) => {
+        $('#dirty').hidden = draftText(d) === savedText;
+      });
 
   on('#copy', 'click', async () => {
     await navigator.clipboard?.writeText(shareUrl).catch(() => {});
@@ -174,10 +161,11 @@ export async function adminView() {
 
   on('#save', 'click', async () => {
     $('#save-err').hidden = true;
-    const { rows, exclusions } = parseList($<HTMLTextAreaElement>('#list').value);
+    const d = editor!.get();
+    const rows = draftRows(d);
     try {
       await busy($<HTMLButtonElement>('#save'), 'Saving…', () =>
-        api('/admin/participants', { body: { participants: rows.map(({ name, phone, family, kid }) => ({ name, phone, family, kid })), exclusions } }),
+        api('/admin/participants', { body: { participants: rows.map(({ name, email, family, kid }) => ({ name, email: email || null, family, kid })), exclusions: d.exclusions } }),
       );
       adminView();
     } catch (e) {
@@ -186,6 +174,7 @@ export async function adminView() {
   });
 
   on('#start', 'click', async () => {
+    if (!$('#dirty').hidden) return showError('#start-err', new Error('Save the list first: the draw uses the saved list.'));
     if (!confirm(`Start Secret Santa for ${list.participants.length} people (adults and kids are drawn separately)? The list is locked after this.`)) return;
     $('#start-err').hidden = true;
     const start = (acceptLoosened: boolean) =>

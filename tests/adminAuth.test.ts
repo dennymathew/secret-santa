@@ -4,7 +4,7 @@ import { fakeAuthAllowed, isTestMode } from '../functions/lib/auth';
 
 const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 const OTHER_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(9)));
-const ME = 'phone:+4915100000000';
+const ME = 'google:me@gmail.com';
 
 describe('admin password', () => {
   it('accepts the right password and rejects anything else', async () => {
@@ -41,7 +41,7 @@ describe('admin session', () => {
     // expired
     expect(await verifySession(token, KEY, h, ME, t0 + SESSION_TTL_MS + 1)).toBe(false);
     // somebody else signed in, using a copied token
-    expect(await verifySession(token, KEY, h, 'phone:+4915111111111', t0)).toBe(false);
+    expect(await verifySession(token, KEY, h, 'google:someone.else@gmail.com', t0)).toBe(false);
     // password changed since
     const h2 = await hashPassword('pw-two-5678', 20_000);
     expect(await verifySession(token, KEY, h2, ME, t0)).toBe(false);
