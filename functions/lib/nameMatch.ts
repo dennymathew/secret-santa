@@ -41,7 +41,8 @@ export function maskEmail(email: string | null): string | null {
 
 export type SignInMatch<T> =
   | { kind: 'email'; p: T }
-  | { kind: 'name'; p: T }
+  /** `replacesEmail`: this person has an email on the list that was never used, and it gets replaced. */
+  | { kind: 'name'; p: T; replacesEmail: boolean }
   | { kind: 'taken'; p: T }
   | { kind: 'ambiguous'; names: string[] }
   | { kind: 'none' };
@@ -49,14 +50,17 @@ export type SignInMatch<T> =
 /**
  * Who is this Google account on the list?
  * 1. Its verified email is on the list (set by the admin, or linked earlier) → that person.
- * 2. Otherwise its Google name matches exactly ONE adult who isn't linked yet → that person (the caller
- *    then locks this email to it, first come first served). Matches that are all linked already → 'taken'.
- * Two or more matching adults are never guessed between.
+ * 2. Otherwise its Google name matches exactly ONE adult with no email yet → that person (the caller
+ *    then locks this email to it, first come first served).
+ * 3. Otherwise, exactly ONE matching adult whose email may be replaced (`canReplace`: the admin typed it in
+ *    and it was never used to sign in) → that person, and the caller replaces the email.
+ * Anything else that matches is already linked → 'taken'. Two or more fits are never guessed between.
  */
 export function matchSignIn<T extends { name: string; google_email: string | null }>(
   email: string,
   googleName: string,
   adults: T[],
+  canReplace: (p: T) => boolean = () => false,
 ): SignInMatch<T> {
   const mail = email.trim().toLowerCase();
   const byEmail = adults.find((p) => p.google_email?.toLowerCase() === mail);
@@ -66,8 +70,12 @@ export function matchSignIn<T extends { name: string; google_email: string | nul
   // People already linked to another account can't be claimed, so they don't make a name ambiguous:
   // "Priya Denny" is Priya when Denny already signed in with his own email.
   const free = c.filter((p) => !p.google_email);
-  if (free.length === 1) return { kind: 'name', p: free[0] };
+  if (free.length === 1) return { kind: 'name', p: free[0], replacesEmail: false };
   if (free.length > 1) return { kind: 'ambiguous', names: free.map((p) => p.name) };
+  // Only when nobody without an email fits: someone whose typed-in email was never used.
+  const replaceable = c.filter((p) => p.google_email && canReplace(p));
+  if (replaceable.length === 1) return { kind: 'name', p: replaceable[0], replacesEmail: true };
+  if (replaceable.length > 1) return { kind: 'ambiguous', names: replaceable.map((p) => p.name) };
   return { kind: 'taken', p: c[0] };
 }
 

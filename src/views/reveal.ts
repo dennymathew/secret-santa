@@ -1,4 +1,4 @@
-import { logo, render, esc, go, on, fmtTime, $, spinner } from '../ui';
+import { logo, render, esc, go, on, fmtTime, $, spinner, footer } from '../ui';
 import { api, type Me } from '../api';
 import { drumRoll } from '../effects/drumroll';
 import { confetti } from '../effects/confetti';
@@ -26,30 +26,95 @@ type RevealResult = { for: string; isKid: boolean; receiver: string; firstOpened
 
 export async function revealView() {
   const kidId = Number(new URLSearchParams(location.hash.split('?')[1] ?? '').get('kid')) || undefined;
-  const body = kidId ? { kidId } : {};
+  if (kidId) return kidFlow(kidId);
 
-  // Already opened (e.g. the back button, or a reload): show the match straight away, no drum roll again.
+  // Already opened (e.g. the back button, or a reload): show it straight away, no drum roll again.
   spinner();
   const me = await api<Me>('/me');
-  const openedAt = kidId ? me.kids.find((k) => k.id === kidId)?.revealedAt : me.participant?.revealedAt;
-  if (openedAt) return showMatch(await api<RevealResult>('/reveal', { body }));
+  if (me.participant?.revealedAt) return showSecretSanta(await api<RevealResult>('/reveal', { body: {} }));
 
+  const result = api<RevealResult>('/reveal', { body: {} });
+  result.catch(() => {}); // handled below
+  const gift = await drumRollStage('Your Secret Santa is…');
+  let r: RevealResult;
+  try {
+    r = await result;
+  } catch (e) {
+    return oops(e);
+  }
+  await openGift(gift);
+  showSecretSanta(r);
+}
+
+/**
+ * A parent hands the phone to a kid. The phone signs out of the parent's account as soon as the kid's
+ * Secret Santa arrives, so the kid can't go back and peek at the parent's (or a sibling's).
+ */
+async function kidFlow(kidId: number) {
+  spinner();
+  const me = await api<Me>('/me');
+  const kid = me.kids.find((k) => k.id === kidId);
+  if (!kid) return oops(new Error('You can only open envelopes for kids in your own family.'));
+  const name = esc(kid.name);
+
+  // 1) Warn the parent first.
+  render(`
+    ${logo()}
+    <section class="card festive center">
+      <span class="big-emoji">🔒</span>
+      <h2>You'll be signed out now</h2>
+      <p>When ${name}'s envelope opens, this phone signs out of your account, so ${name} can't peek at your Secret Santa.</p>
+      <p class="muted">To see your own envelope again afterwards, please sign in again.</p>
+    </section>
+    <div class="stack">
+      <button class="btn green" id="handover">OK, hand the phone to ${name} 🧒</button>
+      <button class="btn ghost light" id="cancel">Cancel</button>
+    </div>
+    ${footer()}
+  `);
+  on('#cancel', 'click', () => go('#/home'));
+  on('#handover', 'click', () => {
+    // 2) The kid's screen.
+    render(`
+      ${logo()}
+      <section class="card festive center">
+        <span class="big-emoji wiggle">🎅</span>
+        <h2>Hi ${name}!</h2>
+        <p>Santa has an envelope for you. Only you should look 👀</p>
+      </section>
+      <div class="stack"><button class="btn" id="open">I'm ${name}, open it 🎁</button></div>
+      ${footer()}
+    `);
+    on('#open', 'click', async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      btn.disabled = true;
+      let r: RevealResult;
+      try {
+        r = await api<RevealResult>('/reveal', { body: { kidId } });
+      } catch (err) {
+        return oops(err);
+      }
+      // 3) Sign out before anything is shown: from now on Back or reload only reach the sign-in page.
+      await signOut();
+      if (r.firstTime) await openGift(await drumRollStage('Drum roll for the little Santa… 🧒'));
+      showKidSecretSanta(r);
+    });
+  });
+}
+
+/** Drum roll and countdown on a shaking gift. Returns the gift, ready to open. */
+async function drumRollStage(label: string): Promise<HTMLElement> {
   render(`
     <div class="reveal-stage">
-      <p style="margin:0;font-size:1.1em">${kidId ? 'Drum roll for the little Santa… 🧒' : 'Your Secret Santa match is…'}</p>
+      <p style="margin:0;font-size:1.1em">${label}</p>
       ${GIFT_SVG}
       <div class="drum" aria-hidden="true">🥁</div>
       <div class="countdown" id="count"></div>
     </div>
   `);
-
-  const result = api<RevealResult>('/reveal', { body });
-  result.catch(() => {}); // handled below
-
   const gift = $('.gift');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const total = reduced ? 0.5 : 4.2;
-  drumRoll(total);
+  drumRoll(reduced ? 0.5 : 4.2);
   gift.classList.add('shake');
   if (!reduced) {
     await sleep(1200);
@@ -59,45 +124,66 @@ export async function revealView() {
       await sleep(1000);
     }
   } else await sleep(500);
+  return gift;
+}
 
-  let r: Awaited<typeof result>;
-  try {
-    r = await result;
-  } catch (e) {
-    render(`${logo()}<section class="card festive center"><span class="big-emoji">🙈</span><h2>Oops</h2><p class="error">${esc(e instanceof Error ? e.message : e)}</p></section><button class="btn" id="back">Back</button>`);
-    on('#back', 'click', () => go('#/home'));
-    return;
-  }
-
+async function openGift(gift: HTMLElement) {
   $('#count').textContent = '';
   gift.classList.add('open');
   confetti();
   await sleep(500);
-  showMatch(r);
 }
 
-function showMatch(r: RevealResult) {
+function oops(e: unknown) {
+  render(`${logo()}<section class="card festive center"><span class="big-emoji">🙈</span><h2>Oops</h2><p class="error">${esc(e instanceof Error ? e.message : e)}</p></section><button class="btn" id="back">Back</button>`);
+  on('#back', 'click', () => go('#/home'));
+}
+
+const resultCard = (r: RevealResult) => `
+  <section class="card festive center match-card">
+    <span class="big-emoji">🎉</span>
+    <p class="muted" style="margin-top:8px">${r.isKid ? `${esc(r.for)} is Secret Santa for…` : 'You are Secret Santa for…'}</p>
+    <p class="match-name">✨ ${esc(r.receiver)} ✨</p>
+    <p>Shhh… keep it secret! 🤫 Start thinking about the perfect gift 🎁</p>
+    <p class="muted">${r.firstTime ? 'Opened just now.' : `First opened on ${esc(fmtTime(r.firstOpenedAt))}.`}</p>
+  </section>`;
+
+function showSecretSanta(r: RevealResult) {
   render(`
     <div class="reveal-stage">
-      <section class="card festive center match-card">
-        <span class="big-emoji">🎉</span>
-        <p class="muted" style="margin-top:8px">${r.isKid ? `${esc(r.for)} is Secret Santa for…` : 'You are Secret Santa for…'}</p>
-        <p class="match-name">✨ ${esc(r.receiver)} ✨</p>
-        <p>Shhh… keep it secret! 🤫 Start thinking about the perfect gift 🎁</p>
-        <p class="muted">${r.firstTime ? 'Opened just now.' : `First opened on ${esc(fmtTime(r.firstOpenedAt))}.`}</p>
-      </section>
+      ${resultCard(r)}
       <div class="stack" style="width:100%">
-        ${r.isKid ? '<button class="btn green" id="home">Back to my envelopes 🎁</button>' : ''}
-        <button class="btn ${r.isKid ? 'ghost light' : 'green'}" id="done">Done, you can close this window now 🎄</button>
-        <button class="btn ghost light" id="board">See who has found their match 👀</button>
+        <button class="btn green" id="done">Done, you can close this window now 🎄</button>
+        <button class="btn ghost light" id="board">See who has found their Secret Santa 👀</button>
       </div>
     </div>
+    ${footer()}
   `);
   on('#board', 'click', () => go('#/board'));
-  on('#home', 'click', () => go('#/home'));
   on('#done', 'click', async () => {
     await signOut();
-    render(`${logo()}<section class="card festive center"><span class="big-emoji wiggle">🎅</span><h2>Merry Christmas!</h2><p>You can close this window now. To see your match again, just open the link and sign in again.</p></section>`);
+    render(`${logo()}<section class="card festive center"><span class="big-emoji wiggle">🎅</span><h2>Merry Christmas!</h2><p>You can close this window now. To see your Secret Santa again, just open the link and sign in again.</p></section>`);
     window.close();
+  });
+}
+
+/** The kid's result. Already signed out, so there is no way back to the parent's envelope. */
+function showKidSecretSanta(r: RevealResult) {
+  render(`
+    <div class="reveal-stage">
+      ${resultCard(r)}
+      <p class="muted center" style="color:#dfe8ff">🔒 You've been signed out, so nobody can peek at your grown-up's Secret Santa.</p>
+      <div class="stack" style="width:100%"><button class="btn green" id="done">Done 🎄</button></div>
+    </div>
+  `);
+  on('#done', 'click', () => {
+    render(`${logo()}
+      <section class="card festive center">
+        <span class="big-emoji wiggle">🎅</span>
+        <h2>Give the phone back to your grown-up</h2>
+        <p><b>Grown-up:</b> you were signed out so the kids can't peek at your Secret Santa. Please sign in again to see your own envelope.</p>
+      </section>
+      <div class="stack"><button class="btn" id="again">Sign in again</button></div>`);
+    on('#again', 'click', () => go('#/verify'));
   });
 }

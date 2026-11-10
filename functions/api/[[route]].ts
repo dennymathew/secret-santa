@@ -23,7 +23,7 @@ const app = new Hono<App>().basePath('/api');
 
 const now = () => new Date().toISOString();
 const quorum = (env: Env) => Math.max(1, Number(env.UNSEAL_QUORUM ?? '5') || 5);
-const endsAt = (env: Env) => env.GAME_ENDS_AT ?? '2026-12-26T00:00:00+01:00';
+const endsAt = (env: Env) => env.GAME_ENDS_AT ?? '2026-12-12T00:00:00+01:00';
 
 async function logEvent(db: D1Database, type: string, actor: string | null, detail: string | null = null) {
   await db.prepare('INSERT INTO events (type, actor_name, detail) VALUES (?, ?, ?)').bind(type, actor, detail).run();
@@ -64,6 +64,13 @@ app.use('*', async (c, next) => {
   const participant = await c.env.DB.prepare('SELECT * FROM participants WHERE google_email = ?')
     .bind(identity.email)
     .first<Participant>();
+  // First sign-in with this email: from now on it can't be replaced by name any more (see /google/claim).
+  if (participant && !participant.google_seen_at) {
+    participant.google_seen_at = now();
+    await c.env.DB.prepare('UPDATE participants SET google_seen_at = ? WHERE id = ? AND google_seen_at IS NULL')
+      .bind(participant.google_seen_at, participant.id)
+      .run();
+  }
   const organizer = listFromEnv(c.env.ADMIN_EMAILS).includes(identity.email);
   const idKey = identityKey(identity);
   // Admin = a valid session from POST /admin/login, for this exact person and the current password.
@@ -85,24 +92,31 @@ async function everUnlockedAdmin(db: D1Database, p: Participant | null, idKey: s
 }
 
 // ---------- Not linked yet: find yourself by name ----------
+type Adult = { id: number; name: string; google_email: string | null; google_claimed_at: string | null; google_seen_at: string | null };
 async function adults(db: D1Database) {
   const { results } = await db
-    .prepare('SELECT id, name, google_email FROM participants WHERE is_kid = 0')
-    .all<{ id: number; name: string; google_email: string | null }>();
+    .prepare('SELECT id, name, google_email, google_claimed_at, google_seen_at FROM participants WHERE is_kid = 0')
+    .all<Adult>();
   return results;
 }
+
+/** An email the admin typed into the list is only a hint until it is used: until then, a name fit may replace it. */
+const typedNeverUsed = (p: Adult) => !!p.google_email && !p.google_claimed_at && !p.google_seen_at;
+const organizerName = (env: Env) => env.ORGANIZER_NAME?.trim() || 'the admin';
 
 /** What the claim screen shows: one person to confirm, or why Santa can't find you. */
 app.post('/google/match', async (c) => {
   const { identity, participant, organizer } = c.get('who');
   if (participant) return c.json({ claimed: true });
-  const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB));
+  const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB), typedNeverUsed);
   return c.json({
     claimed: false,
     googleName: identity.name,
     organizer,
+    organizerName: organizerName(c.env),
     result: m.kind,
     candidate: m.kind === 'name' || m.kind === 'taken' ? { id: m.p.id, name: m.p.name } : null,
+    replacesEmail: m.kind === 'name' && m.replacesEmail,
   });
 });
 
@@ -110,20 +124,29 @@ app.post('/google/claim', async (c) => {
   const { identity, participant } = c.get('who');
   if (participant) return c.json({ ok: true });
   const { id } = await c.req.json<{ id?: number }>().catch(() => ({ id: undefined }));
-  // Decided again on the server: only a single, unlinked name match can be claimed.
-  const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB));
-  if (m.kind === 'taken') return c.json({ error: `${m.p.name} is already linked to another Google account. Ask the admin.` }, 409);
+  const ask = organizerName(c.env);
+  // Decided again on the server: only a single name fit that is unlinked (or has an unused typed email) can be claimed.
+  const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB), typedNeverUsed);
+  if (m.kind === 'taken')
+    return c.json({ error: `${m.p.name} is already linked to another Google account. Please ask ${ask}.` }, 409);
   if (m.kind !== 'name' || m.p.id !== Number(id))
-    return c.json({ error: "🎅 Santa can't match your Google account to the list. Ask the admin to add your email." }, 403);
-  // Lock only if still unclaimed (atomic): first come, first served.
+    return c.json({ error: `🎅 Santa couldn't find you on the Berlin Mallu list. Please ask ${ask} to add you.` }, 403);
+  // Lock only if still unclaimed, or the typed email is still unused (atomic): first come, first served.
+  const at = now();
   const res = await c.env.DB.prepare(
-    'UPDATE participants SET google_email = ?, google_claimed_at = ? WHERE id = ? AND google_email IS NULL',
+    `UPDATE participants SET google_email = ?, google_claimed_at = ?, google_seen_at = ?
+     WHERE id = ? AND (google_email IS NULL OR (google_claimed_at IS NULL AND google_seen_at IS NULL))`,
   )
-    .bind(identity.email, now(), m.p.id)
+    .bind(identity.email, at, at, m.p.id)
     .run();
   if (!res.meta.changes)
-    return c.json({ error: `${m.p.name} is already linked to another Google account. Ask the admin.` }, 409);
-  await logEvent(c.env.DB, 'google_claimed', m.p.name, maskEmail(identity.email));
+    return c.json({ error: `${m.p.name} is already linked to another Google account. Please ask ${ask}.` }, 409);
+  await logEvent(
+    c.env.DB,
+    'google_claimed',
+    m.p.name,
+    `${maskEmail(identity.email)}${m.replacesEmail ? ', replacing the email on the list' : ''}`,
+  );
   return c.json({ ok: true });
 });
 
@@ -444,15 +467,27 @@ admin.post('/participants', async (c) => {
   // Keep Google accounts people already linked by name, so a list edit doesn't make them link again.
   // An email typed into the list always wins.
   const { results: old } = await db
-    .prepare('SELECT name, google_email, google_claimed_at FROM participants WHERE is_kid = 0 AND google_email IS NOT NULL')
-    .all<{ name: string; google_email: string; google_claimed_at: string | null }>();
+    .prepare(
+      'SELECT name, google_email, google_claimed_at, google_seen_at FROM participants WHERE is_kid = 0 AND google_email IS NOT NULL',
+    )
+    .all<{ name: string; google_email: string; google_claimed_at: string | null; google_seen_at: string | null }>();
   const oldLink = new Map(old.map((o) => [o.name.toLowerCase(), o]));
+  // An email that has already signed in stays "used" after a list edit, so it can't be replaced by name.
+  const oldByEmail = new Map(old.map((o) => [o.google_email.toLowerCase(), o]));
   const final = rows.map((r) => {
-    if (r.kid || r.email) return { ...r, claimedAt: null as string | null };
+    const none = { claimedAt: null as string | null, seenAt: null as string | null };
+    if (r.kid) return { ...r, ...none };
+    if (r.email) {
+      const o = oldByEmail.get(r.email);
+      if (!o) return { ...r, ...none };
+      // Same person and email as before: keep how it was linked, too.
+      const same = o.name.toLowerCase() === r.name.toLowerCase();
+      return { ...r, claimedAt: same ? o.google_claimed_at : null, seenAt: o.google_seen_at };
+    }
     const o = oldLink.get(r.name.toLowerCase());
     return o && !seenEmails.has(o.google_email.toLowerCase())
-      ? { ...r, email: o.google_email, claimedAt: o.google_claimed_at }
-      : { ...r, claimedAt: null };
+      ? { ...r, email: o.google_email, claimedAt: o.google_claimed_at, seenAt: o.google_seen_at }
+      : { ...r, ...none };
   });
   await db.batch([
     db.prepare('DELETE FROM unseal_approvals'),
@@ -463,9 +498,9 @@ admin.post('/participants', async (c) => {
     ...final.map((r) =>
       db
         .prepare(
-          'INSERT INTO participants (name, google_email, google_claimed_at, family, family_group, is_kid) VALUES (?, ?, ?, ?, ?, ?)',
+          'INSERT INTO participants (name, google_email, google_claimed_at, google_seen_at, family, family_group, is_kid) VALUES (?, ?, ?, ?, ?, ?, ?)',
         )
-        .bind(r.name, r.email, r.claimedAt, r.family, r.familyGroup, r.kid ? 1 : 0),
+        .bind(r.name, r.email, r.claimedAt, r.seenAt, r.family, r.familyGroup, r.kid ? 1 : 0),
     ),
   ]);
   const { results: saved } = await db.prepare('SELECT id, name FROM participants').all<{ id: number; name: string }>();
@@ -477,7 +512,7 @@ admin.post('/participants', async (c) => {
 });
 
 admin.get('/participants', async (c) => {
-  // Emails and families are needed by the admin to check the list. Matches are never included.
+  // Emails and families are needed by the admin to check the list. Secret Santas are never included.
   const { results: people } = await c.env.DB.prepare(
     'SELECT id, name, google_email AS email, google_claimed_at AS claimed_at, family, is_kid FROM participants ORDER BY id',
   ).all();
@@ -531,10 +566,10 @@ admin.post('/start', async (c) => {
     throw e;
   }
   if (relaxed.length && !acceptLoosened)
-    return c.json({ error: 'Some rules have to be loosened so everyone gets a match.', details: relaxed.map((r) => r.message), needsConfirm: true }, 428);
+    return c.json({ error: 'Some rules have to be loosened so everyone gets a Secret Santa.', details: relaxed.map((r) => r.message), needsConfirm: true }, 428);
   // Final guard: one sealed envelope per participant, nobody missing.
   if (result.size !== people.length || people.some((p) => !result.has(p.id)))
-    return c.json({ error: 'Safety check failed: not everyone got a match. Nothing was saved.' }, 500);
+    return c.json({ error: 'Safety check failed: not everyone got a Secret Santa. Nothing was saved.' }, 500);
   const key = await getKey(c.env.MATCH_KEY);
   const sealed = await Promise.all([...result].map(async ([g, r]) => ({ g, ...(await seal(key, g, r)) })));
   const startedAt = now();
@@ -588,7 +623,7 @@ admin.get('/unsealed', async (c) => {
   const db = c.env.DB;
   if (!state.unsealedAt) {
     await db.prepare('UPDATE unseal_requests SET unsealed_at = ? WHERE id = ?').bind(now(), state.id).run();
-    await logEvent(db, 'unsealed', null, 'The admin viewed all matches');
+    await logEvent(db, 'unsealed', null, 'The admin viewed all Secret Santas');
   }
   const { results: people } = await db.prepare('SELECT id, name, is_kid FROM participants').all<{
     id: number;

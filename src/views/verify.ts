@@ -22,6 +22,7 @@ export async function verifyView() {
       <div class="stack" style="margin-top:12px">
         <button class="btn" id="google" type="button">${GOOGLE_ICON} Sign in with Google</button>
       </div>
+      <p class="notice">🗑 <b>All accounts and data are removed on 12 December 2026.</b> After that the game closes, and your name, Google link and Secret Santa are deleted.</p>
       <p class="muted small center" style="margin-top:12px">Not on the list? Ask the admin in the WhatsApp group.</p>
     </section>
   `);

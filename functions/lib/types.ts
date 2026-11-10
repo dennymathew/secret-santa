@@ -6,6 +6,8 @@ export interface Env {
   ADMIN_EMAILS?: string;
   GAME_ENDS_AT?: string;
   UNSEAL_QUORUM?: string;
+  /** Who people should ask to be added to the list (shown on the claim screen). Default: "the admin". */
+  ORGANIZER_NAME?: string;
   DEV_AUTH?: string;
   /** PBKDF2 hash of the admin panel password (scripts/set-admin-password.sh). Unset = admin panel disabled. */
   ADMIN_PASSWORD_HASH?: string;
@@ -24,6 +26,8 @@ export interface Participant {
   is_kid: number;
   google_email: string | null;
   google_claimed_at: string | null;
+  /** First sign-in with google_email. NULL = an email typed into the list that was never used. */
+  google_seen_at: string | null;
   revealed_at: string | null;
 }
 

@@ -2,7 +2,7 @@ import './styles.css';
 import { startSnow, buildLights } from './effects/snow';
 import { initAuth, isSignedIn, signOut, TEST_SITE } from './auth';
 import { ApiError } from './api';
-import { render, logo, esc, redirect, spinner, on } from './ui';
+import { render, logo, esc, redirect, spinner, on, go, footer } from './ui';
 import { welcomeView } from './views/welcome';
 import { verifyView } from './views/verify';
 import { claimView } from './views/claim';
@@ -36,11 +36,12 @@ async function route() {
       await signOut();
       return redirect('#/verify');
     }
+    const signedIn = await isSignedIn().catch(() => false);
     if (e instanceof ApiError && e.closed) {
-      render(`${logo()}<section class="card festive center"><span class="big-emoji wiggle">🎄</span><h2>Merry Christmas!</h2><p>Secret Santa is over for this year. See you next December! ⛄</p></section>`);
+      render(`${logo()}<section class="card festive center"><span class="big-emoji wiggle">🎄</span><h2>Merry Christmas!</h2><p>Secret Santa is over for this year. See you next December! ⛄</p><p class="muted">All accounts and data have been removed.</p></section>${signedIn ? footer() : ''}`);
       return;
     }
-    render(`${logo()}<section class="card festive center"><span class="big-emoji">🙈</span><h2>Oops</h2><p class="error">${esc(e instanceof Error ? e.message : e)}</p><button class="btn" id="retry">Try again</button></section>`);
+    render(`${logo()}<section class="card festive center"><span class="big-emoji">🙈</span><h2>Oops</h2><p class="error">${esc(e instanceof Error ? e.message : e)}</p><button class="btn" id="retry">Try again</button></section>${signedIn ? footer() : ''}`);
     on('#retry', 'click', () => route());
   }
 }
@@ -56,6 +57,13 @@ async function route() {
     sessionStorage.removeItem('bms-after-google');
     if (!location.hash.startsWith('#/home')) location.hash = '#/home';
   }
+  // Sign out link at the bottom of every signed-in page (see footer() in ui.ts).
+  document.getElementById('app')!.addEventListener('click', async (e) => {
+    if (!(e.target as HTMLElement).closest('[data-signout]')) return;
+    e.preventDefault();
+    await signOut();
+    go('#/');
+  });
   window.addEventListener('hashchange', route);
   route();
 })();

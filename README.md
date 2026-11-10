@@ -2,16 +2,16 @@
 
 A cute, mobile-first Secret Santa site for the Berlin Mallus.
 
-- **Sign in with Google** (Firebase). No phone numbers, no SMS. Santa finds you on the list by your **Gmail address** if the admin entered one, otherwise by your **Google name**. A name match is only used when exactly one person fits, and it then locks that Google account to you (first come, first served, shown in the log; the admin can unlink it).
-- Open your envelope once, with a drum roll 🥁 and confetti 🎉. Every later visit shows the same match.
+- **Sign in with Google** (Firebase). No phone numbers, no SMS. Santa finds you on the list by your **Gmail address** if the admin entered one, otherwise by your **Google name**. A name match is only used when exactly one person fits, and it then locks that Google account to you (first come, first served, shown in the log; the admin can unlink it). An email on the list that was never used can be replaced this way too, after "Are you …?".
+- Open your envelope once, with a drum roll 🥁 and confetti 🎉. Every later visit shows the same Secret Santa.
 - **Families** are groups the admin defines, not surnames. Family members never draw each other.
 - **Kids** have their own draw, so kids give to kids. They never sign in: any adult in their family opens the kid's envelope on their own phone, together with the kid.
-- The **draw runs on the server** and is stored **encrypted** with a key nobody has seen. The admin can't see matches.
+- The **draw runs on the server** and is stored **encrypted** with a key nobody has seen. The admin can't see anyone's Secret Santa.
 - **Everyone sees the same status board** as the admin: who has opened their envelope, plus an activity log.
-- **Emergency unseal:** the admin can see all matches only after **5 participants approve**, and everyone sees that it happened.
+- **Emergency unseal:** the admin can see all Secret Santas only after **5 participants approve**, and everyone sees that it happened.
 - The **admin panel is locked with a password**, which the server checks on every admin request. It has a **restart switch**: redraw (keep the list) or wipe everything.
 - A separate **test site** with its **own database**, with a fake Google sign-in (type any name and email), so you can try the whole flow after deploying.
-- The site closes automatically on **26 Dec 2026**.
+- The site closes automatically on **12 Dec 2026** (midnight Berlin time, so the last day to play is 11 Dec). The sign-in page promises that **all accounts and data are removed on 12 December 2026**: the admin does that by hand, see [12 December: remove all data](#12-december-remove-all-data).
 
 Stack: Vite + vanilla TypeScript (frontend), Cloudflare Pages Functions + Hono (API), Cloudflare D1 (SQLite), Firebase Auth (Google). Everything runs on free plans.
 
@@ -77,6 +77,7 @@ After changing a secret, redeploy so the site picks it up: Cloudflare dashboard 
 | What | Command |
 |---|---|
 | Log in to Cloudflare | `npx wrangler login` |
+| **12 Dec: remove all data** (promised on the sign-in page) | See [12 December: remove all data](#12-december-remove-all-data) |
 | After Christmas: delete everything | `npx wrangler d1 delete berlinmallusanta`, `npx wrangler d1 delete berlinmallusanta-test`, `npx wrangler pages project delete berlinmallusanta`, then delete the Firebase project |
 
 ---
@@ -179,14 +180,14 @@ Before going live, also run the new migration on the real database: `npm run db:
 
    !Anu, Chinnu                   ← extra "never match" pair
    ```
-   - Adults: `Name` or `Name, Gmail address`. With an email, Santa recognises them for sure. Without one, their Google account name must contain the name on the list (e.g. `Anu` matches *Anu Mary Kurian*), and only when exactly one person fits. Two people with the same first name need emails (the preview warns you). Kids: `Kid: Name`. A kid must be under a family that has at least one adult.
+   - Adults: `Name` or `Name, Gmail address`. With an email, Santa recognises them straight away. The email is only a hint until it's used: if they sign in with a different Google account whose name fits, Santa asks "Are you Denny?", and **Yes** replaces the email on the list (shown in the log). Once an email has signed in, it stays locked to that person (you can still unlink it). Without an email, their Google account name must contain the name on the list (e.g. `Anu` matches *Anu Mary Kurian*), and only when exactly one person fits. Two people with the same first name need emails (the preview warns you). Kids: `Kid: Name`. A kid must be under a family that has at least one adult.
    - There are two separate draws: adults ↔ adults and kids ↔ kids. In both, family members never get each other, and nobody gets someone who also got them. The kids' draw needs at least 2 kids.
-   - **Everyone always gets a match.** Saving the list runs a test draw and shows the result above the Start button. If the rules can't all be met, they are loosened one at a time, least important first: first two people may draw each other, then the extra `!` pairs are ignored, and family members may draw each other only as a last resort. You see what would be loosened and confirm it at Start, and it appears in the public log. Every draw is also checked before it is saved: everyone gives once and receives once, or nothing is saved.
+   - **Everyone always gets a Secret Santa.** Saving the list runs a test draw and shows the result above the Start button. If the rules can't all be met, they are loosened one at a time, least important first: first two people may draw each other, then the extra `!` pairs are ignored, and family members may draw each other only as a last resort. You see what would be loosened and confirm it at Start, and it appears in the public log. Every draw is also checked before it is saved: everyone gives once and receives once, or nothing is saved.
    - Lines starting with any other `#` are comments. To join the game yourself, put yourself on the list with the same Gmail address as in `ADMIN_EMAILS`.
    - Problems show under each person as you type (and in the raw list), and the server checks again when you save. An "Unsaved changes" note stays until you tap **Save list**.
 3. **Save list**, then **Start Secret Santa 🎁**. The list is locked from then on.
 4. Tap **Share on WhatsApp**. 🎄
-5. **Restart**, if needed: the *Danger zone* card at the bottom of the admin panel. Type `RESET` and the password, then choose **Redraw** (keeps the list, deletes matches, opened envelopes and the log, back to Draft) or **Wipe everything** (also deletes the list). Everyone sees "🔄 … restarted the game" in the log.
+5. **Restart**, if needed: the *Danger zone* card at the bottom of the admin panel. Type `RESET` and the password, then choose **Redraw** (keeps the list, deletes all Secret Santas, opened envelopes and the log, back to Draft) or **Wipe everything** (also deletes the list). Everyone sees "🔄 … restarted the game" in the log.
 
 Before sharing with everyone, try Google sign-in with an email on the list and with a name-only entry. Open the link from inside WhatsApp on an iPhone and an Android phone.
 
@@ -202,6 +203,21 @@ Before sharing with everyone, try Google sign-in with an email on the list and w
 - **Honest limit:** the owner of the Cloudflare account could deploy changed code that decrypts everything. That takes deliberate effort and would show in the git history. This protects against peeking by accident, not against a determined cheater.
 
 ---
+
+## 12 December: remove all data
+
+The sign-in page tells everyone that all accounts and data are removed on **12 December 2026**. The site closes by itself at midnight (`GAME_ENDS_AT`), but **deleting the data is your job that day**:
+
+1. Wipe the real database. This also removes the activity log and the admin login log, which the in-app "Wipe everything" keeps:
+   ```bash
+   npx wrangler d1 execute berlinmallusanta --remote --command "DELETE FROM unseal_approvals; DELETE FROM unseal_requests; DELETE FROM assignments; DELETE FROM exclusions; DELETE FROM participants; DELETE FROM events; DELETE FROM admin_logins; UPDATE game SET status='draft', started_at=NULL WHERE id=1;"
+   ```
+2. Wipe the test database:
+   ```bash
+   npx wrangler d1 execute berlinmallusanta-test --remote --env preview --command "DELETE FROM unseal_approvals; DELETE FROM unseal_requests; DELETE FROM assignments; DELETE FROM exclusions; DELETE FROM participants; DELETE FROM events; DELETE FROM admin_logins; UPDATE game SET status='draft', started_at=NULL WHERE id=1;"
+   ```
+3. Delete the Google sign-in accounts that Firebase keeps (the database wipe doesn't touch them): Firebase console → **Authentication** → **Users** → select all → **Delete**.
+4. Check that it's empty: `npx wrangler d1 execute berlinmallusanta --remote --command "SELECT (SELECT COUNT(*) FROM participants) AS people, (SELECT COUNT(*) FROM events) AS log"` should show 0 and 0.
 
 ## After Christmas: delete everything
 ```bash

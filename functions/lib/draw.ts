@@ -226,7 +226,7 @@ const RULE_TEXT: Record<keyof Rules, string> = {
 
 /**
  * Like drawPools, but never fails because of the rules: when a group can't follow all of them,
- * rules are loosened one at a time (least important first) until everyone has a match.
+ * rules are loosened one at a time (least important first) until everyone has a Secret Santa.
  * Each loosening is reported so the admin can confirm it. Only a group of 1 is truly impossible.
  */
 export function drawPoolsSafe(

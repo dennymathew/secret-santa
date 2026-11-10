@@ -1,4 +1,4 @@
-import { logo, render, on, go } from '../ui';
+import { logo, render, on, go, footer } from '../ui';
 import { isSignedIn } from '../auth';
 
 export async function welcomeView() {
@@ -15,6 +15,7 @@ export async function welcomeView() {
       <button class="btn" id="go">${signedIn ? 'Continue 🎁' : 'Find my Secret Santa 🎅'}</button>
     </div>
     <p class="center" style="color:#dfe8ff;font-size:.9em;margin:0">❄️ Snow, cake and a little bit of chaos ❄️</p>
+    ${signedIn ? footer() : ''}
   `);
   on('#go', 'click', () => go(signedIn ? '#/home' : '#/verify'));
 }
