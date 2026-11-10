@@ -1,18 +1,18 @@
 // Parses the admin's participant list.
 //
 //   # Family: Mathew        ← everyone below belongs to this family (surnames don't matter)
-//   Denny, +4915100000000
-//   Kid: Aarav              ← a kid: no phone; parents in the same family open the envelope
+//   Denny, denny@gmail.com  ← email optional: without one, people sign in by matching their Google name
+//   Kid: Aarav              ← a kid: never signs in; parents in the same family open the envelope
 //   # Single                ← people below have no family
-//   Chinnu, +4916033333333
+//   Chinnu
 //   !Anu, Chinnu            ← extra "never match" pair
 //   # anything else         ← comment
-import { normalizePhone } from '../functions/lib/phone';
+import { isEmail, sharedFirstNames } from '../functions/lib/nameMatch';
 
 export interface ListRow {
   name: string;
-  phone: string;
-  e164: string | null;
+  /** Optional Google email (lower-cased); "" if none. */
+  email: string;
   family: string | null;
   kid: boolean;
   line: number;
@@ -42,12 +42,12 @@ export function parseList(text: string) {
     }
     const kid = line.match(/^(kid|child)\s*:\s*(.+)$/i);
     if (kid) {
-      rows.push({ name: kid[2].split(/[,;\t]/)[0].trim(), phone: '', e164: null, family, kid: true, line: i + 1 });
+      rows.push({ name: kid[2].split(/[,;\t]/)[0].trim(), email: '', family, kid: true, line: i + 1 });
       return;
     }
-    const [name = '', phone = ''] = line.split(/[,;\t]/).map((c) => c.trim());
+    const [name = '', email = ''] = line.split(/[,;\t]/).map((c) => c.trim());
     if (name.toLowerCase() === 'name') return; // header row
-    rows.push({ name, phone, e164: normalizePhone(phone), family, kid: false, line: i + 1 });
+    rows.push({ name, email: email.toLowerCase(), family, kid: false, line: i + 1 });
   });
   return { rows, exclusions };
 }
@@ -55,16 +55,23 @@ export function parseList(text: string) {
 /** Problems that can be spotted before saving (the server checks again). */
 export function rowProblem(r: ListRow, rows: ListRow[]): string | null {
   if (!r.name) return 'Name missing';
-  if (!r.kid && !r.e164) return 'Phone must start with +49 or +91';
+  if (!r.kid && r.email && !isEmail(r.email)) return "That email doesn't look right";
   if (r.kid && !r.family) return 'Kids must be under a # Family: header';
   if (r.kid && !rows.some((a) => !a.kid && a.family?.toLowerCase() === r.family!.toLowerCase()))
     return 'This family has no adult to open the envelope';
   return null;
 }
 
+/** Adults without an email who share a first name can't sign in by name: the admin should add emails. */
+export function needEmail(rows: ListRow[]): Set<string> {
+  const adults = rows.filter((r) => !r.kid);
+  const shared = new Set(sharedFirstNames(adults.map((r) => r.name)));
+  return new Set(adults.filter((r) => !r.email && shared.has(r.name)).map((r) => r.name));
+}
+
 /** Turns a saved list back into the text format. */
 export function formatList(
-  people: Array<{ name: string; phone_e164: string | null; family: string | null; is_kid: number }>,
+  people: Array<{ name: string; email: string | null; family: string | null; is_kid: number }>,
   exclusions: Array<{ a: string; b: string }>,
 ) {
   const groups = new Map<string, typeof people>();
@@ -76,7 +83,7 @@ export function formatList(
   const blocks: string[] = [];
   for (const [fam, list] of [...groups].sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))) {
     const lines = [fam ? `# Family: ${fam}` : '# Single'];
-    for (const p of list.filter((x) => !x.is_kid)) lines.push(`${p.name}, ${p.phone_e164}`);
+    for (const p of list.filter((x) => !x.is_kid)) lines.push(p.email ? `${p.name}, ${p.email}` : p.name);
     for (const p of list.filter((x) => x.is_kid)) lines.push(`Kid: ${p.name}`);
     blocks.push(lines.join('\n'));
   }
@@ -85,18 +92,18 @@ export function formatList(
 }
 
 export const SAMPLE_LIST = `# Family: Mathew
-Denny, +4915100000000
-Priya, +4915122222222
+Denny, denny@gmail.com
+Priya
 Kid: Aarav
 Kid: Diya
 
 # Family: Nair-Kurian
-Anu, +4915111111111
-Biju, +919847222222
+Anu
+Biju, biju.nair@gmail.com
 Kid: Ammu
 
 # Single
-Chinnu, +4916033333333
+Chinnu
 
 # Extra "never match" pairs start with !
 !Anu, Chinnu`;

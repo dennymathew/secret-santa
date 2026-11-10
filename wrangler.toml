@@ -12,8 +12,8 @@ migrations_dir = "migrations"
 [vars]
 # Your Firebase project id (Project settings → General)
 FIREBASE_PROJECT_ID = "secretsantaberlinmallus"
-# ADMIN_PHONES (and optionally ADMIN_EMAILS) are set as secrets, so phone numbers stay out of git:
-#   npx wrangler pages secret put ADMIN_PHONES --project-name berlinmallusanta
+# ADMIN_EMAILS (who may sign in before being on the list) is set as a secret, so it stays out of git:
+#   npx wrangler pages secret put ADMIN_EMAILS --project-name berlinmallusanta --env production
 # After this moment the site is closed
 GAME_ENDS_AT = "2026-12-26T00:00:00+01:00"
 # Approvals needed before the admin can see all matches
@@ -23,9 +23,9 @@ UNSEAL_QUORUM = "5"
 # TEST SITE = every Cloudflare Pages *preview* deployment (any branch except main),
 # e.g. push a `test` branch → https://test.berlinmallusanta.pages.dev
 # It has its OWN database, so testing never touches the real game.
-# Every listed number signs in with code 123456 (no SMS). TEST_MODE is ignored on main.
+# Sign-in is a fake Google prompt (type any name/email). TEST_MODE is ignored on main.
 # Pages doesn't inherit vars/bindings into environments, so everything is repeated here.
-# Secrets (MATCH_KEY, ADMIN_PASSWORD_HASH, ADMIN_PHONES) must be set for preview too: see README.
+# Secrets (MATCH_KEY, ADMIN_PASSWORD_HASH, ADMIN_EMAILS) must be set for preview too: see README.
 # ---------------------------------------------------------------------------
 [env.preview]
 

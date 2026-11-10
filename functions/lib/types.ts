@@ -2,7 +2,7 @@ export interface Env {
   DB: D1Database;
   MATCH_KEY: string;
   FIREBASE_PROJECT_ID: string;
-  ADMIN_PHONES?: string;
+  /** Comma-separated emails that may sign in before they are on the list (to paste the first list). */
   ADMIN_EMAILS?: string;
   GAME_ENDS_AT?: string;
   UNSEAL_QUORUM?: string;
@@ -18,15 +18,11 @@ export interface Env {
 export interface Participant {
   id: number;
   name: string;
-  phone_e164: string | null;
   family: string | null;
   is_kid: number;
-  is_admin: number;
   google_email: string | null;
   google_claimed_at: string | null;
   revealed_at: string | null;
 }
 
-export type Identity =
-  | { kind: 'phone'; phone: string }
-  | { kind: 'google'; email: string; name: string };
+export type Identity = { kind: 'google'; email: string; name: string };

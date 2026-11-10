@@ -97,7 +97,7 @@ function showMatch(r: RevealResult) {
   on('#home', 'click', () => go('#/home'));
   on('#done', 'click', async () => {
     await signOut();
-    render(`${logo()}<section class="card festive center"><span class="big-emoji wiggle">🎅</span><h2>Merry Christmas!</h2><p>You can close this window now. To see your match again, just open the link and verify again.</p></section>`);
+    render(`${logo()}<section class="card festive center"><span class="big-emoji wiggle">🎅</span><h2>Merry Christmas!</h2><p>You can close this window now. To see your match again, just open the link and sign in again.</p></section>`);
     window.close();
   });
 }

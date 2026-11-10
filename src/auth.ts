@@ -1,6 +1,7 @@
-// Sign-in: Firebase phone OTP, with Google as the fallback.
-// Without a Firebase config (local dev), or on the test site, a fake sign-in is used: OTP is always 123456.
-import type { Auth, ConfirmationResult, RecaptchaVerifier } from 'firebase/auth';
+// Sign-in: Google through Firebase (no phone numbers, no SMS).
+// Without a Firebase config (local dev), or on the test site, a fake Google sign-in is used:
+// you type a name and email, and the server treats them as a Google account.
+import type { Auth } from 'firebase/auth';
 
 const cfg = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string | undefined,
@@ -8,18 +9,15 @@ const cfg = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined,
 };
-/** Fake sign-in (code 123456). Decided in initAuth(): no Firebase config, or the server says it's the test site. */
+/** Fake Google sign-in. Decided in initAuth(): no Firebase config, or the server says it's the test site. */
 export let DEV_MODE = !cfg.apiKey;
-/** True on the deployed test site (separate database, no SMS). */
+/** True on the deployed test site (separate database, no real Google). */
 export let TEST_SITE = false;
 const DEV_KEY = 'bms-dev-token';
 export const ADMIN_KEY = 'bms-admin-session';
 
 let auth: Auth | null = null;
 let fb: typeof import('firebase/auth') | null = null;
-let verifier: RecaptchaVerifier | null = null;
-let confirmation: ConfirmationResult | null = null;
-let devPendingPhone: string | null = null;
 
 export async function initAuth(): Promise<void> {
   // The server decides whether this is the test site (it never is on the production branch).
@@ -40,7 +38,7 @@ export async function initAuth(): Promise<void> {
     authDomain: cfg.authDomain || `${cfg.projectId}.firebaseapp.com`,
   });
   auth = fb.initializeAuth(app, {
-    // Session only: closing the tab signs you out, as with a fresh OTP each visit.
+    // Session only: closing the tab signs you out.
     persistence: [fb.browserSessionPersistence, fb.inMemoryPersistence],
     popupRedirectResolver: fb.browserPopupRedirectResolver,
   });
@@ -60,37 +58,6 @@ export async function getToken(): Promise<string | null> {
 
 export async function isSignedIn() {
   return !!(await getToken());
-}
-
-export async function sendCode(phoneE164: string, buttonId: string): Promise<void> {
-  if (DEV_MODE) {
-    devPendingPhone = phoneE164;
-    return;
-  }
-  if (!auth || !fb) throw new Error('Sign-in is still loading, please try again.');
-  verifier?.clear();
-  verifier = new fb.RecaptchaVerifier(auth, buttonId, { size: 'invisible' });
-  try {
-    confirmation = await fb.signInWithPhoneNumber(auth, phoneE164, verifier);
-  } catch (e) {
-    verifier.clear();
-    verifier = null;
-    throw new Error(friendlyError(e));
-  }
-}
-
-export async function confirmCode(code: string): Promise<void> {
-  if (DEV_MODE) {
-    if (code !== '123456') throw new Error(`That code isn't right. (${TEST_SITE ? 'Test site' : 'Dev mode'}: use 123456)`);
-    sessionStorage.setItem(DEV_KEY, `dev-phone:${devPendingPhone}`);
-    return;
-  }
-  if (!confirmation) throw new Error('Please request a new code.');
-  try {
-    await confirmation.confirm(code);
-  } catch (e) {
-    throw new Error(friendlyError(e));
-  }
 }
 
 export async function googleSignIn(): Promise<void> {
@@ -128,12 +95,10 @@ export async function signOut() {
 function friendlyError(e: unknown): string {
   const code = (e as { code?: string })?.code ?? '';
   const map: Record<string, string> = {
-    'auth/invalid-verification-code': "That code isn't right. Please check the SMS and try again.",
-    'auth/code-expired': 'That code has expired. Please request a new one.',
-    'auth/too-many-requests': 'Too many tries. Please wait a few minutes, or use Google sign-in below.',
-    'auth/invalid-phone-number': "That phone number doesn't look right.",
-    'auth/quota-exceeded': "We've hit today's SMS limit. Please use Google sign-in below.",
-    'auth/captcha-check-failed': 'The robot check failed. Please reload the page and try again.',
+    'auth/too-many-requests': 'Too many tries. Please wait a few minutes and try again.',
+    'auth/popup-closed-by-user': 'Google sign-in was closed. Please try again.',
+    'auth/user-cancelled': 'Google sign-in was cancelled. Please try again.',
+    'auth/disallowed-useragent': "Google doesn't allow sign-in inside this app. Please open the link in Chrome or Safari.",
     'auth/network-request-failed': 'Network problem. Check your connection and try again.',
     'auth/web-storage-unsupported': 'This browser blocks sign-in storage. Please open the link in Chrome or Safari.',
     'auth/operation-not-supported-in-this-environment': 'Please open the link in Chrome or Safari.',

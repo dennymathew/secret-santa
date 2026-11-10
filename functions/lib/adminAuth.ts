@@ -13,7 +13,7 @@ const b64u = (bytes: Uint8Array) =>
 const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
-export const identityKey = (id: Identity) => (id.kind === 'phone' ? `phone:${id.phone}` : `google:${id.email}`);
+export const identityKey = (id: Identity) => `google:${id.email}`;
 
 function sameBytes(a: Uint8Array, b: Uint8Array) {
   if (a.length !== b.length) return false;

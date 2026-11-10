@@ -2,56 +2,65 @@ import { logo, render, esc, go, spinner, $, showError, redirect } from '../ui';
 import { api } from '../api';
 import { signOut } from '../auth';
 
+type Match = {
+  claimed: boolean;
+  googleName?: string;
+  organizer?: boolean;
+  result?: 'name' | 'taken' | 'ambiguous' | 'none';
+  candidate?: { id: number; name: string } | null;
+};
+
+/** Shown when this Google email isn't on the list yet: link by name once, or Santa can't find you. */
 export async function claimView() {
   spinner();
-  const data = await api<{ claimed: boolean; googleName?: string; candidates: Array<{ id: number; name: string; taken: boolean }> }>(
-    '/google/candidates',
-    { method: 'POST', body: {} },
-  );
+  const data = await api<Match>('/google/match', { method: 'POST', body: {} });
   if (data.claimed) return redirect('#/home');
+  const who = `<b>${esc(data.googleName || 'this Google account')}</b>`;
+  const c = data.candidate;
 
-  const list = data.candidates;
+  const askAdmin = `<p class="muted">Ask the admin to add your Gmail address next to your name on the list, then sign in again.</p>`;
   const body =
-    list.length === 0
-      ? `<h2>Hmm, who are you? 🤔</h2>
-         <p>We couldn't find <b>${esc(data.googleName)}</b> on the list.</p>
-         <p class="muted">Please use SMS sign-in, or ask the admin how your name is written on the list.</p>`
-      : list.length === 1
-        ? `<h2>Are you ${esc(list[0].name)}? 🎅</h2>
-           <p class="muted">Signed in with Google as <b>${esc(data.googleName)}</b>. Confirming links this Google account to ${esc(list[0].name)} for good.</p>`
-        : `<h2>Which one is you? 🎅</h2>
-           <p class="muted">Signed in with Google as <b>${esc(data.googleName)}</b>. Pick yourself. This links your Google account for good.</p>`;
+    data.result === 'name' && c
+      ? `<h2>Are you ${esc(c.name)}? 🎅</h2>
+         <p class="muted">You signed in with Google as ${who}. Confirming links this Google account to ${esc(c.name)} for good.</p>`
+      : `<span class="big-emoji">🎅</span>
+         <h2>Santa couldn't find you on the Berlin Mallu list</h2>
+         <p>You signed in with Google as ${who}.
+         ${
+           data.result === 'taken' && c
+             ? `${esc(c.name)} on the list is already linked to another Google account.`
+             : data.result === 'ambiguous'
+               ? 'More than one person on the list has that name, so Santa can\'t tell which one is you.'
+               : "Your Google email and name don't match anyone on the list."
+         }</p>
+         ${askAdmin}`;
 
   render(`
     ${logo()}
-    <section class="card festive">
+    <section class="card festive ${data.result === 'name' ? '' : 'center'}">
       ${body}
       <p class="error" id="err" hidden></p>
       <div class="stack" style="margin-top:12px">
-        ${list
-          .map((c) =>
-            c.taken
-              ? `<button class="btn ghost" disabled>${esc(c.name)}: already linked to another Google account</button>`
-              : `<button class="btn green" data-id="${c.id}">${list.length === 1 ? `Yes, I'm ${esc(c.name)}` : esc(c.name)}</button>`,
-          )
-          .join('')}
-        <button class="btn ghost" id="out">${list.length ? "No, that's not me" : 'Back'}</button>
+        ${data.result === 'name' && c ? `<button class="btn green" id="yes">Yes, I'm ${esc(c.name)}</button>` : ''}
+        ${data.organizer ? `<button class="btn" id="admin">Open the admin panel 🛠</button>` : ''}
+        <button class="btn ghost" id="out">${data.result === 'name' ? "No, that's not me" : 'Try another Google account'}</button>
       </div>
     </section>
   `);
 
-  document.querySelectorAll<HTMLButtonElement>('button[data-id]').forEach((b) =>
-    b.addEventListener('click', async () => {
+  if (c && data.result === 'name')
+    $<HTMLButtonElement>('#yes').addEventListener('click', async (e) => {
+      const b = e.currentTarget as HTMLButtonElement;
       try {
         b.disabled = true;
-        await api('/google/claim', { body: { id: Number(b.dataset.id) } });
+        await api('/google/claim', { body: { id: c.id } });
         redirect('#/home');
-      } catch (e) {
+      } catch (err) {
         b.disabled = false;
-        showError('#err', e);
+        showError('#err', err);
       }
-    }),
-  );
+    });
+  if (data.organizer) $('#admin').addEventListener('click', () => go('#/admin'));
   $('#out').addEventListener('click', async () => {
     await signOut();
     go('#/verify');
