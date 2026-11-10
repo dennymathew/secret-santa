@@ -65,9 +65,7 @@ Also set `FIREBASE_PROJECT_ID` in `wrangler.toml` to your Firebase project id.
 Then, in the Cloudflare dashboard, go to *Workers & Pages → Create → Pages → Connect to Git*, pick the repo, and set:
 - Project name: **berlinmallusanta**, which gives you `berlinmallusanta.pages.dev`
 - Build command: `npm run build` · Output directory: `dist`
-- Build environment variables:
-  - `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID` (from Firebase step 6)
-  - `VITE_FIREBASE_AUTH_DOMAIN` = `berlinmallusanta.pages.dev`
+- No build environment variables are needed. The public Firebase web config (from Firebase step 6) is in `vite.config.ts`, and is only built in when Cloudflare builds the production branch `main`. Test-site and local builds never contain it, so they can't send SMS. The Node version comes from `.node-version`.
 
 Then set the secrets:
 ```bash
