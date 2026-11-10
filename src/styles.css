@@ -213,3 +213,5 @@ tr.bad td { background: #ffecec; }
 .test-banner { position: fixed; z-index: 50; left: 50%; transform: translateX(-50%); bottom: calc(8px + env(safe-area-inset-bottom));
   background: #ffd84d; color: #3a2a00; font-weight: 600; font-size: .85em; padding: 6px 14px; border-radius: 999px;
   box-shadow: 0 4px 14px rgba(0,0,0,.25); white-space: nowrap; pointer-events: none; }
+
+.muted.small { font-size: .88em; margin: 0; }
