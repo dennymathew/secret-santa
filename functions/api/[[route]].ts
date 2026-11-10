@@ -60,7 +60,12 @@ app.post('/check-phone', async (c) => {
   if (!p) return c.json({ ok: false, error: 'Please enter a German (+49) or Indian (+91) mobile number.' });
   const isAdmin = listFromEnv(c.env.ADMIN_PHONES).includes(p);
   const row = await c.env.DB.prepare('SELECT 1 FROM participants WHERE phone_e164 = ?').bind(p).first();
-  if (!row && !isAdmin) return c.json({ ok: false, error: "This number isn't on the list. Ask the admin to add you." });
+  // Numbers that aren't on the list never reach Firebase, so no SMS is ever sent to them.
+  if (!row && !isAdmin)
+    return c.json({
+      ok: false,
+      error: "🎅 Santa can't find this number on the official Berlin Mallu list, so no SMS was sent. Ask the admin to add you.",
+    });
   return c.json({ ok: true, phone: p });
 });
 

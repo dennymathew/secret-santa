@@ -20,6 +20,8 @@ export async function verifyView() {
             <input id="phone" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="151 2345 6789" required />
           </div>
         </div>
+        <p class="muted small">🎄 Only <b>official Berlin Mallus</b> get a code. If your number is on Santa's list, an SMS is on its way.
+          If it isn't, no SMS is sent at all.</p>
         <p class="error" id="phone-err" hidden></p>
         <button class="btn" id="send" type="submit">Send me a code 📩</button>
       </form>
