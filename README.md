@@ -17,6 +17,70 @@ Stack: Vite + vanilla TypeScript (frontend), Cloudflare Pages Functions + Hono (
 
 ---
 
+## 🧰 Command cheat sheet
+
+Run everything from the project folder. **Real** = https://berlinmallusanta.pages.dev (database `berlinmallusanta`) · **Test** = https://test.berlinmallusanta.pages.dev (database `berlinmallusanta-test`) · **Local** = your computer.
+
+### Run locally
+| What | Command | Notes |
+|---|---|---|
+| First-time setup | `npm install && cp .dev.vars.example .dev.vars && npm run db:migrate:local` | Then put a real key in `MATCH_KEY` in `.dev.vars` (`openssl rand -base64 32`) |
+| Start the site | `npm run build && npx wrangler pages dev dist --port 8788` | Open http://localhost:8788. Fake Google sign-in. Admin password: `local-admin-123` |
+| "No such table" error | `npm run db:migrate:local` | Run after pulling new migrations |
+| Run the tests | `npm test` | |
+| Type check | `npm run typecheck` | Also runs as part of `npm run build`, so a type error fails the deploy |
+| Change the local admin password | `./scripts/set-admin-password.sh --local` | Writes the hash into `.dev.vars` |
+
+### See the databases (read only)
+| What | Command | Notes |
+|---|---|---|
+| Participants: **real** | `npx wrangler d1 execute berlinmallusanta --remote --command "SELECT id, name, family, is_kid, google_email, revealed_at FROM participants"` | |
+| Participants: **test** | `npx wrangler d1 execute berlinmallusanta-test --remote --env preview --command "SELECT id, name, family, is_kid, google_email, revealed_at FROM participants"` | |
+| Activity log: **real** | `npx wrangler d1 execute berlinmallusanta --remote --command "SELECT ts, type, actor_name, detail FROM events ORDER BY id DESC LIMIT 30"` | For **test**: database `berlinmallusanta-test` and add `--env preview` |
+| Game status: **real** | `npx wrangler d1 execute berlinmallusanta --remote --command "SELECT * FROM game"` | Draft or Started |
+| Admin unlocks and wrong passwords: **real** | `npx wrangler d1 execute berlinmallusanta --remote --command "SELECT * FROM admin_logins ORDER BY id DESC LIMIT 20"` | |
+| Local database | Same commands with `--local` instead of `--remote` | |
+| In the browser | dash.cloudflare.com → **Storage & Databases → D1 SQL Database** → pick the database → **Tables** or **Console** | |
+
+> ⚠️ Only use `SELECT` there. The console and `d1 execute` can also change data. Change the list or restart the game in the **admin panel**: it checks the rules and records the change in the public log. Matches are stored encrypted, so they are unreadable here.
+
+### Admin access (secrets)
+| What | Command | Notes |
+|---|---|---|
+| Admin password: **real** | `./scripts/set-admin-password.sh` | At least 10 characters. Logs out every open admin panel |
+| Admin password: **test** | `./scripts/set-admin-password.sh --preview` | |
+| Admin emails: **real** | `npx wrangler pages secret put ADMIN_EMAILS --project-name berlinmallusanta --env production` | Paste the Gmail address(es), comma-separated. These people may sign in before they're on the list. It does **not** make them admin, because the password does that |
+| Admin emails: **test** | `npx wrangler pages secret put ADMIN_EMAILS --project-name berlinmallusanta --env preview` | |
+| List secrets | `npx wrangler pages secret list --project-name berlinmallusanta --env production` | Use `--env preview` for test. Only shows the names, never the values |
+| Delete the old phone secret | `npx wrangler pages secret delete ADMIN_PHONES --project-name berlinmallusanta --env production` | Not used any more. Also run it with `--env preview` |
+| Match key: **real** / **test** | `./scripts/set-match-key.sh` / `./scripts/set-match-key.sh --preview` | Only once, before the game starts. **Never** after the game starts, or nobody can open their envelope |
+
+After changing a secret, redeploy so the site picks it up: Cloudflare dashboard → the Pages project → **Deployments → Retry**, or push a commit.
+
+### Database migrations (after pulling code with a new `migrations/` file)
+| What | Command |
+|---|---|
+| **Real** | `npm run db:migrate:remote` |
+| **Test** | `npx wrangler d1 migrations apply berlinmallusanta-test --remote --env preview` |
+| **Local** | `npm run db:migrate:local` |
+
+### Deploy
+| What | Command | Notes |
+|---|---|---|
+| Update the **real** site | Merge the PR into `main` on GitHub, then `git switch main && git pull` | Cloudflare builds `main` automatically (about 1 min) |
+| Update the **test** site | `git switch main && git pull`, then `git switch test && git merge main && git push`, then `git switch main` | **Always pull `main` first**, or the test site gets old code |
+| See **real** deployments | `npx wrangler pages deployment list --project-name berlinmallusanta --environment production` | Status `Failure` = the build failed; open the Build link for logs |
+| See **test** deployments | `npx wrangler pages deployment list --project-name berlinmallusanta --environment preview` | |
+| Check a site is up | `curl https://berlinmallusanta.pages.dev/api/config` | `{"testMode":false}` on real, `true` on test |
+
+### Accounts and clean-up
+| What | Command |
+|---|---|
+| Log in to Cloudflare | `npx wrangler login` |
+| After Christmas: delete everything | `npx wrangler d1 delete berlinmallusanta`, `npx wrangler d1 delete berlinmallusanta-test`, `npx wrangler pages project delete berlinmallusanta`, then delete the Firebase project |
+
+---
+
 ## Local development (no Firebase, no real Google)
 
 ```bash
@@ -37,6 +101,8 @@ Tests: `npm test` · Type check: `npm run typecheck`
 ---
 
 ## Going live (one-time setup, about 30 minutes)
+
+Every command used here is also in the [Command cheat sheet](#-command-cheat-sheet).
 
 ### 1. Firebase (sign-in)
 1. Create a project at https://console.firebase.google.com (e.g. `berlinmallusanta`).
