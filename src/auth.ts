@@ -1,5 +1,5 @@
 // Sign-in: Firebase phone OTP, with Google as the fallback.
-// Without a Firebase config (local dev) a fake sign-in is used: OTP is always 123456.
+// Without a Firebase config (local dev), or on the test site, a fake sign-in is used: OTP is always 123456.
 import type { Auth, ConfirmationResult, RecaptchaVerifier } from 'firebase/auth';
 
 const cfg = {
@@ -8,8 +8,12 @@ const cfg = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined,
 };
-export const DEV_MODE = !cfg.apiKey;
+/** Fake sign-in (code 123456). Decided in initAuth(): no Firebase config, or the server says it's the test site. */
+export let DEV_MODE = !cfg.apiKey;
+/** True on the deployed test site (separate database, no SMS). */
+export let TEST_SITE = false;
 const DEV_KEY = 'bms-dev-token';
+export const ADMIN_KEY = 'bms-admin-session';
 
 let auth: Auth | null = null;
 let fb: typeof import('firebase/auth') | null = null;
@@ -18,6 +22,14 @@ let confirmation: ConfirmationResult | null = null;
 let devPendingPhone: string | null = null;
 
 export async function initAuth(): Promise<void> {
+  // The server decides whether this is the test site (it never is on the production branch).
+  const conf = await fetch('/api/config')
+    .then((r) => (r.ok ? r.json() : {}))
+    .catch(() => ({}));
+  if ((conf as { testMode?: boolean }).testMode) {
+    TEST_SITE = true;
+    DEV_MODE = true;
+  }
   if (DEV_MODE) return;
   const [{ initializeApp }, fbAuth] = await Promise.all([import('firebase/app'), import('firebase/auth')]);
   fb = fbAuth;
@@ -69,7 +81,7 @@ export async function sendCode(phoneE164: string, buttonId: string): Promise<voi
 
 export async function confirmCode(code: string): Promise<void> {
   if (DEV_MODE) {
-    if (code !== '123456') throw new Error("That code isn't right. (Dev mode: use 123456)");
+    if (code !== '123456') throw new Error(`That code isn't right. (${TEST_SITE ? 'Test site' : 'Dev mode'}: use 123456)`);
     sessionStorage.setItem(DEV_KEY, `dev-phone:${devPendingPhone}`);
     return;
   }
@@ -83,9 +95,10 @@ export async function confirmCode(code: string): Promise<void> {
 
 export async function googleSignIn(): Promise<void> {
   if (DEV_MODE) {
-    const name = prompt('DEV MODE: Google account name', 'Anu Mary Kurian');
+    const label = TEST_SITE ? 'TEST SITE' : 'DEV MODE';
+    const name = prompt(`${label}: Google account name`, 'Anu Mary Kurian');
     if (!name) return;
-    const email = prompt('DEV MODE: Google email', `${name.split(' ')[0].toLowerCase()}@gmail.com`);
+    const email = prompt(`${label}: Google email`, `${name.split(' ')[0].toLowerCase()}@gmail.com`);
     if (!email) return;
     sessionStorage.setItem(DEV_KEY, `dev-google:${email}|${name}`);
     location.hash = '#/home';
@@ -108,6 +121,7 @@ export function takeGoogleError(): string | null {
 
 export async function signOut() {
   sessionStorage.removeItem(DEV_KEY);
+  sessionStorage.removeItem(ADMIN_KEY);
   if (auth && fb) await fb.signOut(auth);
 }
 

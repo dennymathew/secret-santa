@@ -1,5 +1,5 @@
-import { logo, render, esc, go, on, fmtTime, $ } from '../ui';
-import { api } from '../api';
+import { logo, render, esc, go, on, fmtTime, $, spinner } from '../ui';
+import { api, type Me } from '../api';
 import { drumRoll } from '../effects/drumroll';
 import { confetti } from '../effects/confetti';
 import { signOut } from '../auth';
@@ -22,17 +22,28 @@ const GIFT_SVG = `<svg class="gift" viewBox="0 0 200 200" aria-hidden="true">
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+type RevealResult = { for: string; isKid: boolean; receiver: string; firstOpenedAt: string; firstTime: boolean };
+
 export async function revealView() {
+  const kidId = Number(new URLSearchParams(location.hash.split('?')[1] ?? '').get('kid')) || undefined;
+  const body = kidId ? { kidId } : {};
+
+  // Already opened (e.g. the back button, or a reload): show the match straight away, no drum roll again.
+  spinner();
+  const me = await api<Me>('/me');
+  const openedAt = kidId ? me.kids.find((k) => k.id === kidId)?.revealedAt : me.participant?.revealedAt;
+  if (openedAt) return showMatch(await api<RevealResult>('/reveal', { body }));
+
   render(`
     <div class="reveal-stage">
-      <p style="margin:0;font-size:1.1em">Your Secret Santa match is…</p>
+      <p style="margin:0;font-size:1.1em">${kidId ? 'Drum roll for the little Santa… 🧒' : 'Your Secret Santa match is…'}</p>
       ${GIFT_SVG}
       <div class="drum" aria-hidden="true">🥁</div>
       <div class="countdown" id="count"></div>
     </div>
   `);
 
-  const result = api<{ receiver: string; firstOpenedAt: string; firstTime: boolean }>('/reveal', { method: 'POST' });
+  const result = api<RevealResult>('/reveal', { body });
   result.catch(() => {}); // handled below
 
   const gift = $('.gift');
@@ -62,23 +73,28 @@ export async function revealView() {
   gift.classList.add('open');
   confetti();
   await sleep(500);
+  showMatch(r);
+}
 
+function showMatch(r: RevealResult) {
   render(`
     <div class="reveal-stage">
       <section class="card festive center match-card">
         <span class="big-emoji">🎉</span>
-        <p class="muted" style="margin-top:8px">You are Secret Santa for…</p>
+        <p class="muted" style="margin-top:8px">${r.isKid ? `${esc(r.for)} is Secret Santa for…` : 'You are Secret Santa for…'}</p>
         <p class="match-name">✨ ${esc(r.receiver)} ✨</p>
         <p>Shhh… keep it secret! 🤫 Start thinking about the perfect gift 🎁</p>
         <p class="muted">${r.firstTime ? 'Opened just now.' : `First opened on ${esc(fmtTime(r.firstOpenedAt))}.`}</p>
       </section>
       <div class="stack" style="width:100%">
-        <button class="btn green" id="done">Done, you can close this window now 🎄</button>
+        ${r.isKid ? '<button class="btn green" id="home">Back to my envelopes 🎁</button>' : ''}
+        <button class="btn ${r.isKid ? 'ghost light' : 'green'}" id="done">Done, you can close this window now 🎄</button>
         <button class="btn ghost light" id="board">See who has found their match 👀</button>
       </div>
     </div>
   `);
   on('#board', 'click', () => go('#/board'));
+  on('#home', 'click', () => go('#/home'));
   on('#done', 'click', async () => {
     await signOut();
     render(`${logo()}<section class="card festive center"><span class="big-emoji wiggle">🎅</span><h2>Merry Christmas!</h2><p>You can close this window now. To see your match again, just open the link and verify again.</p></section>`);

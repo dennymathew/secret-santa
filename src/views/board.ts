@@ -3,12 +3,15 @@ import { api, type Board, type Me } from '../api';
 
 const EVENT_TEXT: Record<string, (a: string, d: string) => string> = {
   game_started: (_a, d) => `🎬 The draw started (${d})`,
-  revealed: (a) => `🎁 ${a} found their match`,
+  revealed: (a, d) => `🎁 ${a} found their match${d ? ` (${d})` : ''}`,
   google_claimed: (a, d) => `🔗 ${a} linked a Google account (${d})`,
   claim_unlocked: (a, d) => `🔓 The admin unlinked ${a}'s Google account (${d})`,
   unseal_requested: () => '🚨 The admin asked to unseal all matches',
   unseal_approved: (a) => `✋ ${a} approved the unseal`,
   unsealed: () => '👁 The admin viewed all matches',
+  admin_unlocked: (a) => `🔑 ${a} unlocked the admin panel`,
+  admin_login_failed: (a) => `🚫 Wrong admin password (${a})`,
+  game_reset: (a, d) => `🔄 ${a} restarted the game (${d})`,
 };
 
 export function unsealPanel(b: Board, me: Me | null) {
@@ -16,7 +19,7 @@ export function unsealPanel(b: Board, me: Me | null) {
   if (!u) return '';
   const pct = Math.min(100, Math.round((u.approvals.length / u.quorum) * 100));
   const iApproved = u.approvals.some((a) => a.id === b.me);
-  const canApprove = !!me?.participant && !me.isAdmin && !iApproved && !u.unsealedAt;
+  const canApprove = !!me?.participant && !me.isAdmin && !me.adminEver && !iApproved && !u.unsealedAt;
   return `<section class="card">
     <h2>🚨 Unseal request</h2>
     <p>The admin asked to see <b>all</b> matches (for example, because someone dropped out). This only works once
@@ -34,15 +37,8 @@ export async function boardView() {
   const [me, b] = await Promise.all([api<Me>('/me'), api<Board>('/board')]);
   const done = b.participants.filter((p) => p.revealed).length;
   const pct = b.participants.length ? Math.round((done / b.participants.length) * 100) : 0;
-
-  render(`
-    ${logo('Everyone sees exactly this, the admin too 👀')}
-    <section class="card festive">
-      <h2>Who has found their match?</h2>
-      <div class="progress" aria-label="Progress"><div style="width:${pct}%"></div></div>
-      <p class="muted">${done} of ${b.participants.length} have opened their envelope</p>
-      <ul class="people">
-        ${b.participants
+  const list = (people: Board['participants']) => `<ul class="people">
+        ${people
           .map(
             (p) => `<li class="${p.revealed ? 'done' : ''} ${p.id === b.me ? 'me' : ''}">
               <span class="status" aria-label="${p.revealed ? 'Done' : 'Waiting'}">${p.revealed ? '🎁' : '⏳'}</span>
@@ -52,7 +48,18 @@ export async function boardView() {
             </li>`,
           )
           .join('')}
-      </ul>
+      </ul>`;
+  const kids = b.participants.filter((p) => p.isKid);
+
+  render(`
+    ${logo('Everyone sees exactly this, the admin too 👀')}
+    <section class="card festive">
+      <h2>Who has found their match?</h2>
+      <div class="progress" aria-label="Progress"><div style="width:${pct}%"></div></div>
+      <p class="muted">${done} of ${b.participants.length} envelopes opened</p>
+      ${kids.length ? '<h3 class="section-title">Grown-ups</h3>' : ''}
+      ${list(b.participants.filter((p) => !p.isKid))}
+      ${kids.length ? `<h3 class="section-title">🧒 Kids</h3>${list(kids)}` : ''}
     </section>
     ${unsealPanel(b, me)}
     <section class="card">
@@ -70,7 +77,9 @@ export async function boardView() {
       <button class="btn ghost light" id="refresh">Refresh 🔄</button>
       <button class="btn ghost light" id="back">Back</button>
     </div>
+    <div class="footer-links"><button class="link" id="admin">🛠 Admin</button></div>
   `);
+  on('#admin', 'click', () => go('#/admin'));
 
   on('#refresh', 'click', () => boardView());
   on('#back', 'click', () => go(me.participant ? '#/home' : '#/admin'));

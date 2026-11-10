@@ -18,3 +18,26 @@ FIREBASE_PROJECT_ID = "berlinmallusanta"
 GAME_ENDS_AT = "2026-12-26T00:00:00+01:00"
 # Approvals needed before the admin can see all matches
 UNSEAL_QUORUM = "5"
+
+# ---------------------------------------------------------------------------
+# TEST SITE = every Cloudflare Pages *preview* deployment (any branch except main),
+# e.g. push a `test` branch → https://test.berlinmallusanta.pages.dev
+# It has its OWN database, so testing never touches the real game.
+# Every listed number signs in with code 123456 (no SMS). TEST_MODE is ignored on main.
+# Pages doesn't inherit vars/bindings into environments, so everything is repeated here.
+# Secrets (MATCH_KEY, ADMIN_PASSWORD_HASH, ADMIN_PHONES) must be set for preview too: see README.
+# ---------------------------------------------------------------------------
+[env.preview]
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "berlinmallusanta-test"
+# Replace with the id printed by `npx wrangler d1 create berlinmallusanta-test`
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"
+
+[env.preview.vars]
+TEST_MODE = "1"
+FIREBASE_PROJECT_ID = "berlinmallusanta"
+GAME_ENDS_AT = "2026-12-26T00:00:00+01:00"
+UNSEAL_QUORUM = "5"

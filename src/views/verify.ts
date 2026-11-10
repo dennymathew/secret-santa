@@ -1,6 +1,6 @@
 import { logo, render, on, $, busy, showError, go, esc } from '../ui';
 import { api } from '../api';
-import { sendCode, confirmCode, googleSignIn, takeGoogleError, DEV_MODE } from '../auth';
+import { sendCode, confirmCode, googleSignIn, takeGoogleError, DEV_MODE, TEST_SITE } from '../auth';
 
 export async function verifyView() {
   const googleError = takeGoogleError();
@@ -8,7 +8,7 @@ export async function verifyView() {
     ${logo()}
     <section class="card festive">
       <h2>Who's there? 🔔</h2>
-      ${DEV_MODE ? '<p class="notice">🛠 Dev mode: no real SMS. The code is <b>123456</b>.</p>' : ''}
+      ${DEV_MODE ? `<p class="notice">${TEST_SITE ? '🧪 Test site' : '🛠 Dev mode'}: no real SMS. The code is <b>123456</b>.</p>` : ''}
       <form id="phone-form" class="stack" novalidate>
         <div>
           <label for="phone">Your mobile number</label>

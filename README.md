@@ -4,9 +4,13 @@ A cute, mobile-first Secret Santa site for the Berlin Mallus.
 
 - Sign in with a 🇩🇪 +49 or 🇮🇳 +91 mobile number and an SMS code (Firebase). If the SMS doesn't arrive, use **Google sign-in**: your Google name is matched to the list, then that Google account is locked to you.
 - Open your envelope once, with a drum roll 🥁 and confetti 🎉. Every later visit shows the same match.
+- **Families** are groups the admin defines, not surnames. Family members never draw each other.
+- **Kids** have their own draw, so kids give to kids. They need no phone: any adult in their family opens the kid's envelope on their own phone, together with the kid.
 - The **draw runs on the server** and is stored **encrypted** with a key nobody has seen. The admin can't see matches.
 - **Everyone sees the same status board** as the admin: who has opened their envelope, plus an activity log.
 - **Emergency unseal:** the admin can see all matches only after **5 participants approve**, and everyone sees that it happened.
+- The **admin panel is locked with a password**, which the server checks on every admin request. It has a **restart switch**: redraw (keep the list) or wipe everything.
+- A separate **test site** with its **own database**, where every number signs in with **123456**, so you can try the whole flow after deploying.
 - The site closes automatically on **26 Dec 2026**.
 
 Stack: Vite + vanilla TypeScript (frontend), Cloudflare Pages Functions + Hono (API), Cloudflare D1 (SQLite), Firebase Auth (SMS + Google). The only cost is SMS, at about €0.07–0.10 each.
@@ -25,7 +29,7 @@ npx vite build && npx wrangler pages dev dist --port 8788
 Open http://localhost:8788. With no Firebase config, the site runs in **dev mode**:
 - Any listed number signs in with the code **123456**.
 - "Sign in with Google" asks for a fake name and email.
-- `+4915100000000` is the admin (see `.dev.vars`). Open `#/admin` to import a list and start.
+- `+4915100000000` may sign in even before any list exists (`ADMIN_PHONES` in `.dev.vars`). Open `#/admin` and unlock it with the local password **local-admin-123** (from `.dev.vars.example`; set your own with `./scripts/set-admin-password.sh --local`).
 
 Dev sign-in only works when **both** `DEV_AUTH=1` is set **and** the request comes from localhost.
 
@@ -67,27 +71,60 @@ Then, in the Cloudflare dashboard, go to *Workers & Pages → Create → Pages �
 
 Then set the secrets:
 ```bash
-npx wrangler pages secret put ADMIN_PHONES --project-name berlinmallusanta   # e.g. +4915112345678
+npx wrangler pages secret put ADMIN_PHONES --project-name berlinmallusanta   # your number, e.g. +4915112345678
 ./scripts/set-match-key.sh                                                   # seals the matches; the key is never shown
+./scripts/set-admin-password.sh                                              # the admin panel password (only a hash is stored)
 ```
+- `ADMIN_PHONES` (optionally `ADMIN_EMAILS`) only lets these people **sign in before they're on the list**, so you can paste the first list. It doesn't make anyone admin.
+- **Admin = whoever knows the admin password**, and is signed in as someone on the list or in `ADMIN_PHONES`. Use at least 10 characters. Running the script again changes the password and logs out every open admin panel.
 Redeploy (*Deployments → Retry*), so the new secrets are picked up.
 
 > If your Pages URL ends up different (for example, the name was taken), replace `berlinmallusanta.pages.dev` everywhere above **and** in the `og:` tags in `index.html`.
 
-### 4. Run the game
-1. Open `https://berlinmallusanta.pages.dev`, sign in with your admin number, then **Admin panel**.
-2. Paste the list, one person per line:
+### 4. Test site (separate database, no SMS)
+Every Pages **preview** deployment (any branch except `main`) is the test site. It uses its own database, `berlinmallusanta-test`, and every listed number signs in with code **123456**. Test mode can't switch on for `main`, even by mistake.
+```bash
+npx wrangler d1 create berlinmallusanta-test        # copy the database_id into [[env.preview.d1_databases]] in wrangler.toml
+npx wrangler d1 migrations apply berlinmallusanta-test --remote
+./scripts/set-match-key.sh --preview                # prints a key to paste (test site only)
+./scripts/set-admin-password.sh --preview           # prints a hash to paste
+```
+In the dashboard, open *Workers & Pages → berlinmallusanta → Settings → Variables and Secrets*, choose **Preview**, and add the secrets `MATCH_KEY`, `ADMIN_PASSWORD_HASH` and `ADMIN_PHONES` (this wrangler version can only set production secrets from the command line). Then:
+```bash
+git switch -c test && git push -u origin test
+```
+Open **https://test.berlinmallusanta.pages.dev**. It shows a yellow "🧪 TEST SITE" banner. Run the whole flow there with fake numbers, or with your friends' real numbers, since no SMS is ever sent. To test again, push to `test` again (`git switch test && git merge main && git push`).
+
+Before going live, also run the new migration on the real database: `npm run db:migrate:remote`.
+
+### 5. Run the game
+1. Open `https://berlinmallusanta.pages.dev`, sign in with your number, tap **🛠 Admin** at the bottom, and enter the admin password.
+2. Paste the list. Each family starts with a `# Family:` header:
    ```
-   Name, Phone, Family
-   Anu Kurian, +4915111111111, Kurian
-   Biju Kurian, +919847222222, Kurian
+   # Family: Mathew
+   Denny, +4915100000000
+   Priya, +4915122222222
+   Kid: Aarav
+   Kid: Diya
+
+   # Family: Nair-Kurian          ← surnames don't matter, the header does
+   Anu, +4915111111111
+   Biju, +919847222222
+   Kid: Ammu
+
+   # Single                       ← people with no family in the group
    Chinnu, +4916033333333
-   !Anu Kurian, Chinnu          ← extra "never match" pair
+
+   !Anu, Chinnu                   ← extra "never match" pair
    ```
-   People in the same **Family** never get each other, and nobody gets someone who also got them.
-   To join the game yourself, put your own number on the list.
+   - Adults: `Name, Phone` (+49 or +91). Kids: `Kid: Name`, with no phone. A kid must be under a family that has at least one adult.
+   - There are two separate draws: adults ↔ adults and kids ↔ kids. In both, family members never get each other, and nobody gets someone who also got them. The kids' draw needs at least 2 kids.
+   - **Everyone always gets a match.** Saving the list runs a test draw and shows the result above the Start button. If the rules can't all be met, they are loosened one at a time, least important first: first two people may draw each other, then the extra `!` pairs are ignored, and family members may draw each other only as a last resort. You see what would be loosened and confirm it at Start, and it appears in the public log. Every draw is also checked before it is saved: everyone gives once and receives once, or nothing is saved.
+   - Lines starting with any other `#` are comments. To join the game yourself, put your own number on the list.
+   - The preview table shows each person's family and marks problems before you save.
 3. **Save list**, then **Start Secret Santa 🎁**. The list is locked from then on.
 4. Tap **Share on WhatsApp**. 🎄
+5. **Restart**, if needed: the *Danger zone* card at the bottom of the admin panel. Type `RESET` and the password, then choose **Redraw** (keeps the list, deletes matches, opened envelopes and the log, back to Draft) or **Wipe everything** (also deletes the list). Everyone sees "🔄 … restarted the game" in the log.
 
 Before sharing with everyone, test with one German and one Indian number, and try Google sign-in. Open the link from inside WhatsApp on an iPhone and an Android phone.
 
@@ -98,7 +135,8 @@ Before sharing with everyone, test with one German and one Indian number, and tr
 - The draw runs inside the Cloudflare function. The result is encrypted (AES-GCM) with `MATCH_KEY` and never returned to the admin.
 - `MATCH_KEY` is generated and stored by `scripts/set-match-key.sh` without being printed, and Cloudflare never shows a secret again.
 - `/api/reveal` only ever decrypts **your own** envelope. Every reveal is logged, and you see when your envelope was first opened, so a peek would be noticed.
-- `/api/admin/unsealed` works only after `UNSEAL_QUORUM` (5) non-admin participants approve. The request, approvals and unsealing all appear in the public log.
+- **Admin password:** every `/api/admin/*` request needs a session token from `/api/admin/login`. The token is signed on the server, expires after 2 hours, only works for the person who signed in, and stops working when the password changes. 5 wrong passwords lock one person out for 15 minutes, and 20 in an hour lock everyone out. Every unlock and wrong try is in the public log. Hiding the password form in the browser changes nothing, because the server refuses anyway.
+- `/api/admin/unsealed` works only after `UNSEAL_QUORUM` (5) participants approve. **Anyone who has ever unlocked the admin panel can't approve**, and their approvals don't count, even if they gave them before unlocking. The request, approvals and unsealing all appear in the public log.
 - **Honest limit:** the owner of the Cloudflare account could deploy changed code that decrypts everything. That takes deliberate effort and would show in the git history. This protects against peeking by accident, not against a determined cheater.
 
 ---
@@ -106,6 +144,7 @@ Before sharing with everyone, test with one German and one Indian number, and tr
 ## After Christmas: delete everything
 ```bash
 npx wrangler d1 delete berlinmallusanta
+npx wrangler d1 delete berlinmallusanta-test
 npx wrangler pages project delete berlinmallusanta
 ```
 Then delete the Firebase project, or downgrade it to Spark and remove the billing account, and archive or delete the GitHub repo.

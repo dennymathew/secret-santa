@@ -2,8 +2,9 @@
 CREATE TABLE participants (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   name              TEXT NOT NULL,
-  phone_e164        TEXT NOT NULL UNIQUE,
-  family            TEXT,
+  phone_e164        TEXT UNIQUE,              -- NULL for kids (they never sign in)
+  family            TEXT,                     -- group label set by the admin; NULL = single
+  is_kid            INTEGER NOT NULL DEFAULT 0, -- kids draw among kids only
   is_admin          INTEGER NOT NULL DEFAULT 0,
   google_email      TEXT UNIQUE,
   google_claimed_at TEXT,
