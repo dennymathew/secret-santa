@@ -161,7 +161,7 @@ Before going live, also run the new migration on the real database: `npm run db:
 
 ### 5. Run the game
 1. Open `https://berlinmallusanta.pages.dev`, sign in with Google (the account in `ADMIN_EMAILS`), tap **🛠 Admin** at the bottom, and enter the admin password.
-2. Build the list in **1. Participants**: tap **🏠 ＋ Add a family**, give it a name, then **＋ Adult** (name, Gmail optional) and **＋ Kid** (name only). People with no family go under **🙋 Singles**. Add extra **never match** pairs below. Open **📋 View the raw list** to check everything in one table, copy it as text, or paste a whole list in this text format:
+2. Build the list in **1. Participants**: tap **🏠 ＋ Add a family**, give it a name, then **＋ Adult** (name, Gmail optional) and **＋ Kid** (name only). People with no family go under **🙋 Singles**. Add extra **never match** pairs below. Open **📋 View the raw list** to check everything in one table or copy it as text. To paste a whole list, tap **📋 Paste a whole list as text**, paste, and tap **Save this list 💾**: it saves and fills in the families. The text format:
    ```
    # Family: Mathew
    Denny, denny@gmail.com         ← email optional

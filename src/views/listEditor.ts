@@ -100,9 +100,17 @@ function problems(d: Draft) {
  * Mounts the editor into `root`. Typing updates the draft in place (no re-render, so focus stays);
  * adding or removing things re-renders. `onChange` runs after every change.
  */
-export function mountListEditor(root: HTMLElement, initial: Draft, onChange: (d: Draft) => void) {
+export function mountListEditor(
+  root: HTMLElement,
+  initial: Draft,
+  onChange: (d: Draft) => void,
+  /** Saves the current draft to the server (the admin panel's Save list). Used by "Save this list" in the raw sheet. */
+  onSave?: () => Promise<void>,
+) {
   let d = normalise(structuredClone(initial));
   let rawEditing = false;
+  // Keep the raw sheet open across saves and reloads once the admin opened it.
+  const RAW_OPEN = 'bms-raw-open';
 
   const memberRow = (gi: number, mi: number, m: Member) => `
     <div class="member ${m.kid ? 'kid' : ''}">
@@ -206,17 +214,21 @@ export function mountListEditor(root: HTMLElement, initial: Draft, onChange: (d:
         <button class="btn small ghost" data-act="copy-raw">Copy 📋</button>
         ${
           rawEditing
-            ? `<button class="btn small green" data-act="load-raw">Load into the form ⬆️</button>
+            ? `<button class="btn small green" data-act="save-raw">Save this list 💾</button>
+               <button class="btn small ghost" data-act="load-raw">Only fill the form ⬆️</button>
+               <button class="btn small ghost" data-act="clear-raw">Clear</button>
                <button class="btn small ghost" data-act="cancel-raw">Cancel</button>`
             : `<button class="btn small ghost" data-act="edit-raw">Paste or edit as text ✏️</button>`
         }
       </div>
-      ${rawEditing ? `<p class="muted small" style="margin-top:6px">Format: <b># Family: Name</b> starts a family, <b># Single</b> for people with no family, <b>Name, email</b> for adults (email optional), <b>Kid: Name</b> for kids, <b>!A, B</b> for a never-match pair.</p>` : ''}`;
+      <small class="hint bad" id="raw-err" hidden></small>
+      ${rawEditing ? `<p class="muted small" style="margin-top:6px"><b>Save this list</b> replaces the whole list with this text, saves it, and fills in the families above. Format: <b># Family: Name</b> starts a family, <b># Single</b> for people with no family, <b>Name, email</b> for adults (email optional), <b>Kid: Name</b> for kids, <b>!A, B</b> for a never-match pair.</p>` : ''}`;
   };
 
   function render(focus?: string) {
-    const open = root.querySelector<HTMLDetailsElement>('details.raw')?.open ?? false;
+    const open = sessionStorage.getItem(RAW_OPEN) === '1';
     root.innerHTML = `
+      <button class="btn ghost paste-list" data-act="edit-raw">📋 Paste a whole list as text</button>
       <div class="fams">${d.groups.map(groupCard).join('')}</div>
       <button class="btn ghost add-family" data-act="add-family">🏠 ＋ Add a family</button>
       <h3 class="section-title">🚫 Never match these two</h3>
@@ -225,6 +237,9 @@ export function mountListEditor(root: HTMLElement, initial: Draft, onChange: (d:
         <summary>📋 View the raw list</summary>
         <div id="raw-box">${rawHtml()}</div>
       </details>`;
+    root.querySelector('details.raw')!.addEventListener('toggle', (e) =>
+      sessionStorage.setItem(RAW_OPEN, (e.currentTarget as HTMLDetailsElement).open ? '1' : '0'),
+    );
     refresh(false);
     if (focus) root.querySelector<HTMLElement>(focus)?.focus();
   }
@@ -335,8 +350,32 @@ export function mountListEditor(root: HTMLElement, initial: Draft, onChange: (d:
         return;
       case 'edit-raw':
         rawEditing = true;
+        sessionStorage.setItem(RAW_OPEN, '1');
         render('#raw-text');
+        root.querySelector('details.raw')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
         return;
+      case 'clear-raw': {
+        const ta = root.querySelector<HTMLTextAreaElement>('#raw-text')!;
+        ta.value = '';
+        ta.focus();
+        return;
+      }
+      case 'save-raw': {
+        const text = root.querySelector<HTMLTextAreaElement>('#raw-text')!.value;
+        const next = draftFromText(text);
+        if (!draftRows(next).length) {
+          const err = root.querySelector<HTMLElement>('#raw-err')!;
+          err.textContent = '❌ Nobody found in this text. Paste the list first.';
+          err.hidden = false;
+          return;
+        }
+        rawEditing = false;
+        d = next;
+        render(); // the families above now show the pasted list, even if saving fails
+        onChange(d);
+        await onSave?.();
+        return;
+      }
       case 'cancel-raw':
         rawEditing = false;
         render();

@@ -261,3 +261,4 @@ details.raw td small.muted, details.raw td small.mail { font-size: .85em; }
 details.raw td small.mail { color: var(--green-dark); }
 details.raw td small.bad { color: var(--red); }
 details.raw td small.warn { color: #8a6200; }
+.paste-list { margin-top: 8px; }
