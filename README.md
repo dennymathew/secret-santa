@@ -210,11 +210,11 @@ The sign-in page tells everyone that all accounts and data are removed on **12 D
 
 1. Wipe the real database. This also removes the activity log and the admin login log, which the in-app "Wipe everything" keeps:
    ```bash
-   npx wrangler d1 execute berlinmallusanta --remote --command "DELETE FROM unseal_approvals; DELETE FROM unseal_requests; DELETE FROM assignments; DELETE FROM exclusions; DELETE FROM participants; DELETE FROM events; DELETE FROM admin_logins; UPDATE game SET status='draft', started_at=NULL WHERE id=1;"
+   npx wrangler d1 execute berlinmallusanta --remote --command "DELETE FROM unseal_approvals; DELETE FROM unseal_requests; DELETE FROM assignments; DELETE FROM exclusions; DELETE FROM participants; DELETE FROM events; DELETE FROM admin_logins; DELETE FROM access_requests; UPDATE game SET status='draft', started_at=NULL WHERE id=1;"
    ```
 2. Wipe the test database:
    ```bash
-   npx wrangler d1 execute berlinmallusanta-test --remote --env preview --command "DELETE FROM unseal_approvals; DELETE FROM unseal_requests; DELETE FROM assignments; DELETE FROM exclusions; DELETE FROM participants; DELETE FROM events; DELETE FROM admin_logins; UPDATE game SET status='draft', started_at=NULL WHERE id=1;"
+   npx wrangler d1 execute berlinmallusanta-test --remote --env preview --command "DELETE FROM unseal_approvals; DELETE FROM unseal_requests; DELETE FROM assignments; DELETE FROM exclusions; DELETE FROM participants; DELETE FROM events; DELETE FROM admin_logins; DELETE FROM access_requests; UPDATE game SET status='draft', started_at=NULL WHERE id=1;"
    ```
 3. Delete the Google sign-in accounts that Firebase keeps (the database wipe doesn't touch them): Firebase console → **Authentication** → **Users** → select all → **Delete**.
 4. Check that it's empty: `npx wrangler d1 execute berlinmallusanta --remote --command "SELECT (SELECT COUNT(*) FROM participants) AS people, (SELECT COUNT(*) FROM events) AS log"` should show 0 and 0.

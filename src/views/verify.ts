@@ -8,11 +8,11 @@ export async function verifyView() {
   render(`
     ${logo()}
     <section class="card festive">
-      <h2>Who's there? 🔔</h2>
+      <h2>Who's there?</h2>
       ${DEV_MODE ? `<p class="notice">${TEST_SITE ? '🧪 Test site' : '🛠 Dev mode'}: no real Google. Type any name and email that's on the list.</p>` : ''}
-      <p>🎄 This game is <b>exclusively for official Berlin Mallus</b>.</p>
-      <p class="muted">If Santa has approved you as a Berlin Mallu, your name is already on Santa's list.
-        Sign in with your Google account and you're in. Santa recognises you by your Gmail address or your Google name.</p>
+      <p>🎄 This game is <b>exclusively for the Berlin Mallus group</b>.</p>
+      <p class="muted">If Santa has approved you as a Berlin Mallu, your name is already on the list.
+        Sign in with your Google account and you're in. Santa recognizes you by your Google profile.</p>
       ${
         googleError
           ? `<p class="error">${esc(googleError)}</p>
@@ -22,8 +22,7 @@ export async function verifyView() {
       <div class="stack" style="margin-top:12px">
         <button class="btn" id="google" type="button">${GOOGLE_ICON} Sign in with Google</button>
       </div>
-      <p class="notice">🗑 <b>All accounts and data are removed on 12 December 2026.</b> After that the game closes, and your name, Google link and Secret Santa are deleted.</p>
-      <p class="muted small center" style="margin-top:12px">Not on the list? Ask the admin in the WhatsApp group.</p>
+      <p class="muted small center" style="margin:12px 0 0">All accounts and user data will be removed on 12 December 2026.</p>
     </section>
   `);
 

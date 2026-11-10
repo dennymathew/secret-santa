@@ -394,5 +394,19 @@ export function mountListEditor(
   });
 
   render();
-  return { get: () => d };
+  return {
+    get: () => d,
+    /** Adds an adult to Singles (e.g. from an access request). Returns false if that name is already on the list. */
+    addAdult(name: string, email: string): boolean {
+      if (draftRows(d).some((r) => r.name.toLowerCase() === name.trim().toLowerCase())) return false;
+      const singles = d.groups[d.groups.length - 1];
+      // Reuse an empty row the admin hasn't filled in yet.
+      const blank = singles.members.findIndex((m) => !m.name.trim() && !m.email.trim());
+      if (blank >= 0) singles.members.splice(blank, 1);
+      singles.members.push({ name: name.trim(), email: email.trim().toLowerCase(), kid: false });
+      render();
+      onChange(d);
+      return true;
+    },
+  };
 }
