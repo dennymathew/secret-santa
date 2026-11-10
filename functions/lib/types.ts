@@ -19,6 +19,8 @@ export interface Participant {
   id: number;
   name: string;
   family: string | null;
+  /** Family group from the saved list (same number = same family); NULL for singles. */
+  family_group: number | null;
   is_kid: number;
   google_email: string | null;
   google_claimed_at: string | null;

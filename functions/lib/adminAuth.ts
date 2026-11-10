@@ -3,15 +3,11 @@
 // A session token is signed with a key derived from MATCH_KEY, bound to the signed-in person,
 // and becomes invalid as soon as the password changes.
 import type { Identity } from './types';
+import { b64u, unb64, unb64u } from './base64';
 
 const enc = new TextEncoder();
 const ITERATIONS = 100_000; // the maximum Cloudflare Workers allows
 export const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
-
-const b64u = (bytes: Uint8Array) =>
-  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
-const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 export const identityKey = (id: Identity) => `google:${id.email}`;
 
