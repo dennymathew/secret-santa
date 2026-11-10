@@ -9,7 +9,7 @@ export async function adminView() {
   const me = await api<Me>('/me');
   if (!me.isAdmin) return lockScreen(me);
   const [list, board, { requests }] = await Promise.all([
-    api<{ participants: Array<{ id: number; name: string; email: string | null; family: string | null; is_kid: number }>; exclusions: Array<{ a: string; b: string }> }>('/admin/participants'),
+    api<{ participants: SavedPerson[]; exclusions: Array<{ a: string; b: string }> }>('/admin/participants'),
     api<Board>('/board'),
     api<{ requests: AccessRequest[] }>('/admin/access-requests'),
   ]);
@@ -65,19 +65,7 @@ export async function adminView() {
 
     ${requestsCard(requests, started, list.participants.filter((p) => !p.is_kid))}
 
-    ${
-      board.participants.some((p) => p.google)
-        ? `<section class="card">
-      <h2>🔗 Google links</h2>
-      <p class="muted">If someone linked the wrong person, unlink it. Everyone will see this in the log.</p>
-      <ul class="people">${board.participants
-        .filter((p) => p.google)
-        .map((p) => `<li><span class="who">${esc(p.name)}<small>${esc(p.google)}</small></span><button class="btn small ghost" data-unlock="${p.id}" data-revealed="${p.revealed ? 1 : 0}">Unlink</button></li>`)
-        .join('')}</ul>
-      <p class="error" id="unlink-err" hidden></p>
-    </section>`
-        : ''
-    }
+    ${emailsCard(list.participants, board)}
 
     ${
       started
@@ -307,6 +295,33 @@ type AccessRequest = {
 };
 
 type ListAdult = { id: number; name: string; email: string | null };
+type SavedPerson = { id: number; name: string; email: string | null; claimed_at: string | null; family: string | null; is_kid: number };
+
+/** Every adult's full email (admin only; the public board shows them masked), with Unlink. */
+function emailsCard(people: SavedPerson[], board: Board): string {
+  const adults = people.filter((p) => !p.is_kid).sort((a, b) => a.name.localeCompare(b.name));
+  if (!adults.length) return '';
+  const opened = new Set(board.participants.filter((p) => p.revealed).map((p) => p.id));
+  const linked = adults.filter((p) => p.email).length;
+  return `<section class="card">
+    <h2>📧 Emails and Google links <span class="pill">${linked} / ${adults.length}</span></h2>
+    <p class="muted">Everyone's email, in full (only you see this). If someone linked the wrong person, unlink it. Everyone will see this in the log.</p>
+    <ul class="people">${adults
+      .map(
+        (p) => `<li><span class="who">${esc(p.name)}<small>${
+          p.email
+            ? `${esc(p.email)} · ${p.claimed_at ? 'linked by Google name' : 'on the list'}`
+            : 'no email yet: signs in by Google name'
+        }</small></span>${
+          p.email
+            ? `<button class="btn small ghost" data-unlock="${p.id}" data-revealed="${opened.has(p.id) ? 1 : 0}">Unlink</button>`
+            : ''
+        }</li>`,
+      )
+      .join('')}</ul>
+    <p class="error" id="unlink-err" hidden></p>
+  </section>`;
+}
 
 /** Best guess for who a request is: same full name, else a unique first-name fit. */
 function guessPerson(r: AccessRequest, adults: ListAdult[]): number | null {
