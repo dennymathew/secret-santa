@@ -74,6 +74,38 @@ describe('sign-in matching', () => {
   });
 });
 
+describe('sign-in with a different email than the one on the list', () => {
+  // `used`: that email has already signed in. Only unused typed emails may be replaced.
+  const list = [
+    { id: 1, name: 'Denny', google_email: 'denny@a.com' as string | null, used: false },
+    { id: 2, name: 'Priya', google_email: null as string | null, used: false },
+    { id: 3, name: 'Biju', google_email: 'biju@a.com' as string | null, used: true },
+    { id: 4, name: 'Jose', google_email: 'jose1@a.com' as string | null, used: false },
+    { id: 5, name: 'Jose Mathew', google_email: 'jose2@a.com' as string | null, used: false },
+  ];
+  const canReplace = (p: (typeof list)[number]) => !p.used;
+
+  it('offers the person whose typed email was never used, and says it replaces it', () => {
+    expect(matchSignIn('denny@b.com', 'Denny Mathew Kurian', list, canReplace)).toMatchObject({
+      kind: 'name',
+      p: { id: 1 },
+      replacesEmail: true,
+    });
+  });
+  it('keeps an email that has already been used', () => {
+    expect(matchSignIn('fake@b.com', 'Biju', list, canReplace)).toMatchObject({ kind: 'taken', p: { id: 3 } });
+  });
+  it('prefers someone with no email at all, so typed emails never make a name ambiguous', () => {
+    expect(matchSignIn('p@b.com', 'Priya Denny', list, canReplace)).toMatchObject({ kind: 'name', p: { id: 2 }, replacesEmail: false });
+  });
+  it('never guesses between two replaceable people', () => {
+    expect(matchSignIn('j@b.com', 'Jose Mathew', list, canReplace)).toMatchObject({ kind: 'ambiguous' });
+  });
+  it('without canReplace, typed emails stay locked as before', () => {
+    expect(matchSignIn('denny@b.com', 'Denny', list)).toMatchObject({ kind: 'taken', p: { id: 1 } });
+  });
+});
+
 describe('list format', () => {
   it('reads optional emails and writes them back', () => {
     const { rows } = parseList('# Family: M\nDenny, Denny@Gmail.com\nPriya\nKid: Aarav');

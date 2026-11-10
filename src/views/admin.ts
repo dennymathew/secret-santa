@@ -1,4 +1,4 @@
-import { logo, render, esc, go, on, $, busy, showError, spinner } from '../ui';
+import { logo, render, esc, go, on, $, busy, showError, spinner, footer } from '../ui';
 import { api, ApiError, type Board, type Me } from '../api';
 import { ADMIN_KEY } from '../auth';
 import { unsealPanel } from './board';
@@ -55,7 +55,7 @@ export async function adminView() {
     </section>
     <section class="card">
       <h2>2. Start the draw</h2>
-      <p>The server runs the draw and seals the matches. <b>Nobody can see them, you included.</b> The list is locked after this.</p>
+      <p>The server runs the draw and seals who is whose Secret Santa. <b>Nobody can see it, you included.</b> The list is locked after this.</p>
       ${checkNote(check)}
       <p class="error" id="start-err" hidden></p>
       <button class="btn" id="start" ${list.participants.filter((p) => !p.is_kid).length < 3 ? 'disabled' : ''}>Start Secret Santa 🎁</button>
@@ -85,7 +85,7 @@ export async function adminView() {
       <p class="error" id="un-err" hidden></p>
       <div class="stack">
         ${!board.unseal || board.unseal.unsealedAt ? '<button class="btn ghost" id="req">Request unseal</button>' : ''}
-        ${board.unseal?.approved ? '<button class="btn" id="view">View all matches 👁</button>' : ''}
+        ${board.unseal?.approved ? '<button class="btn" id="view">View all Secret Santas 👁</button>' : ''}
       </div>
       <div id="pairs"></div>
     </section>`
@@ -93,9 +93,9 @@ export async function adminView() {
     }
     <section class="card danger">
       <h2>⚠️ Danger zone: restart</h2>
-      <p class="muted"><b>Redraw</b> keeps the list but deletes all matches, opened envelopes, approvals and the log, and goes back to Draft.
+      <p class="muted"><b>Redraw</b> keeps the list but deletes all Secret Santas, opened envelopes, approvals and the log, and goes back to Draft.
         <b>Wipe everything</b> also deletes the list and Google links. Everyone sees that the game was restarted.</p>
-      ${done ? `<p class="error">${done} ${done === 1 ? 'person has' : 'people have'} already opened their envelope. After a restart they get a new match.</p>` : ''}
+      ${done ? `<p class="error">${done} ${done === 1 ? 'person has' : 'people have'} already opened their envelope. After a restart they get a new Secret Santa.</p>` : ''}
       <label for="reset-word">Type RESET to confirm</label>
       <input id="reset-word" autocomplete="off" autocapitalize="characters" placeholder="RESET" />
       <label for="reset-pw" style="margin-top:8px">Admin password</label>
@@ -111,7 +111,7 @@ export async function adminView() {
       ${me.participant ? '<button class="btn ghost light" id="home">My envelope 🎁</button>' : ''}
       <button class="btn ghost light" id="refresh">Refresh 🔄</button>
     </div>
-    <div class="footer-links"><button class="link" id="lock">🔒 Lock the admin panel</button></div>
+    ${footer('<button class="link" id="lock">🔒 Lock the admin panel</button>')}
   `);
 
   const armed = () => $<HTMLInputElement>('#reset-word').value.trim() === 'RESET' && !!$<HTMLInputElement>('#reset-pw').value;
@@ -124,8 +124,8 @@ export async function adminView() {
   const reset = (mode: 'redraw' | 'wipe') => async () => {
     const what =
       mode === 'wipe'
-        ? 'WIPE EVERYTHING: the list, matches, Google links and the log are deleted. You paste the list again afterwards.'
-        : 'REDRAW: all matches, opened envelopes, approvals and the log are deleted. The list stays, and you start a new draw.';
+        ? 'WIPE EVERYTHING: the list, Secret Santas, Google links and the log are deleted. You paste the list again afterwards.'
+        : 'REDRAW: all Secret Santas, opened envelopes, approvals and the log are deleted. The list stays, and you start a new draw.';
     if (!confirm(`${what}\n\nThis can't be undone. Continue?`)) return;
     $('#reset-err').hidden = true;
     try {
@@ -205,7 +205,7 @@ export async function adminView() {
 
   document.querySelectorAll<HTMLButtonElement>('[data-unlock]').forEach((b) =>
     b.addEventListener('click', async () => {
-      const warn = b.dataset.revealed === '1' ? '\n\n⚠️ This person has already opened their envelope, so whoever linked it may have seen the match.' : '';
+      const warn = b.dataset.revealed === '1' ? '\n\n⚠️ This person has already opened their envelope, so whoever linked it may have seen their Secret Santa.' : '';
       if (!confirm(`Unlink this Google account? Everyone will see this in the log.${warn}`)) return;
       $('#unlink-err').hidden = true;
       try {
@@ -220,7 +220,7 @@ export async function adminView() {
   );
 
   on('#req', 'click', async () => {
-    if (!confirm('Ask the group to approve unsealing ALL matches? Everyone will see this request.')) return;
+    if (!confirm('Ask the group to approve unsealing ALL Secret Santas? Everyone will see this request.')) return;
     try {
       await api('/admin/unseal/request', { method: 'POST' });
       adminView();
@@ -230,7 +230,7 @@ export async function adminView() {
   });
 
   on('#view', 'click', async () => {
-    if (!confirm('Really view all matches? This is logged for everyone to see.')) return;
+    if (!confirm('Really view all Secret Santas? This is logged for everyone to see.')) return;
     try {
       const { pairs } = await api<{ pairs: Array<{ giver: string; receiver: string; isKid: boolean }> }>('/admin/unsealed');
       const table = (title: string, list: typeof pairs) =>
@@ -250,8 +250,8 @@ export async function adminView() {
 function checkNote(check: { ok: boolean; relaxed: string[]; error?: string } | null): string {
   if (!check) return '';
   if (!check.ok) return `<div class="check bad">❌ <b>The draw can't work yet.</b> ${esc(check.error ?? '')}</div>`;
-  if (!check.relaxed.length) return '<div class="check good">✅ Test draw OK: everyone gets a match, and all rules are kept.</div>';
-  return `<div class="check warn">⚠️ <b>Everyone gets a match, but not every rule can be kept:</b>
+  if (!check.relaxed.length) return '<div class="check good">✅ Test draw OK: everyone gets a Secret Santa, and all rules are kept.</div>';
+  return `<div class="check warn">⚠️ <b>Everyone gets a Secret Santa, but not every rule can be kept:</b>
     <ul>${check.relaxed.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>
     Change the list to keep all rules, or start anyway and confirm.</div>`;
 }
@@ -272,6 +272,7 @@ function lockScreen(me: Me) {
     <div class="btn-row">
       ${me.participant ? '<button class="btn ghost light" id="home">Back to my envelope 🎁</button>' : ''}
     </div>
+    ${footer()}
   `);
   $<HTMLInputElement>('#pw').focus();
   on('#home', 'click', () => go('#/home'));

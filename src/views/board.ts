@@ -1,14 +1,14 @@
-import { logo, render, esc, go, on, fmtTime, spinner, showError } from '../ui';
+import { logo, render, esc, go, on, fmtTime, spinner, showError, footer } from '../ui';
 import { api, type Board, type Me } from '../api';
 
 const EVENT_TEXT: Record<string, (a: string, d: string) => string> = {
   game_started: (_a, d) => `🎬 The draw started (${d})`,
-  revealed: (a, d) => `🎁 ${a} found their match${d ? ` (${d})` : ''}`,
+  revealed: (a, d) => `🎁 ${a} found their Secret Santa${d ? ` (${d})` : ''}`,
   google_claimed: (a, d) => `🔗 ${a} linked a Google account (${d})`,
   claim_unlocked: (a, d) => `🔓 The admin unlinked ${a}'s Google account (${d})`,
-  unseal_requested: () => '🚨 The admin asked to unseal all matches',
+  unseal_requested: () => '🚨 The admin asked to unseal all Secret Santas',
   unseal_approved: (a) => `✋ ${a} approved the unseal`,
-  unsealed: () => '👁 The admin viewed all matches',
+  unsealed: () => '👁 The admin viewed all Secret Santas',
   admin_unlocked: (a) => `🔑 ${a} unlocked the admin panel`,
   admin_login_failed: (a) => `🚫 Wrong admin password (${a})`,
   game_reset: (a, d) => `🔄 ${a} restarted the game (${d})`,
@@ -22,7 +22,7 @@ export function unsealPanel(b: Board, me: Me | null) {
   const canApprove = !!me?.participant && !me.isAdmin && !me.adminEver && !iApproved && !u.unsealedAt;
   return `<section class="card">
     <h2>🚨 Unseal request</h2>
-    <p>The admin asked to see <b>all</b> matches (for example, because someone dropped out). This only works once
+    <p>The admin asked to see <b>all</b> Secret Santas (for example, because someone dropped out). This only works once
       <b>${u.quorum}</b> participants approve.</p>
     <div class="progress" aria-label="Approvals"><div style="width:${pct}%"></div></div>
     <p class="muted">${u.approvals.length} / ${u.quorum} approvals${u.approvals.length ? `: ${u.approvals.map((a) => esc(a.name)).join(', ')}` : ''}</p>
@@ -54,7 +54,7 @@ export async function boardView() {
   render(`
     ${logo('Everyone sees exactly this, the admin too 👀')}
     <section class="card festive">
-      <h2>Who has found their match?</h2>
+      <h2>Who has found their Secret Santa?</h2>
       <div class="progress" aria-label="Progress"><div style="width:${pct}%"></div></div>
       <p class="muted">${done} of ${b.participants.length} envelopes opened</p>
       ${kids.length ? '<h3 class="section-title">Grown-ups</h3>' : ''}
@@ -77,14 +77,14 @@ export async function boardView() {
       <button class="btn ghost light" id="refresh">Refresh 🔄</button>
       <button class="btn ghost light" id="back">Back</button>
     </div>
-    <div class="footer-links"><button class="link" id="admin">🛠 Admin</button></div>
+    ${footer('<button class="link" id="admin">🛠 Admin</button>')}
   `);
   on('#admin', 'click', () => go('#/admin'));
 
   on('#refresh', 'click', () => boardView());
   on('#back', 'click', () => go(me.participant ? '#/home' : '#/admin'));
   on('#approve', 'click', async () => {
-    if (!confirm('Approve letting the admin see ALL matches?')) return;
+    if (!confirm('Approve letting the admin see ALL Secret Santas?')) return;
     try {
       await api('/unseal/approve', { method: 'POST' });
       boardView();

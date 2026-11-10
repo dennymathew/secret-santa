@@ -39,6 +39,13 @@ export function logo(sub = '') {
   </header>`;
 }
 
+/** The Sign out link. Every signed-in page shows it at the bottom; main.ts handles the click. */
+export const signOutLink = () => '<button class="link" data-signout>Sign out</button>';
+
+/** The row of small links at the bottom of a signed-in page, always ending with Sign out. */
+export const footer = (...links: string[]) =>
+  `<div class="footer-links">${[...links, signOutLink()].join(' · ')}</div>`;
+
 /** Disables a button and shows a busy label while `fn` runs. */
 export async function busy<T>(btn: HTMLButtonElement, label: string, fn: () => Promise<T>): Promise<T> {
   const old = btn.innerHTML;
