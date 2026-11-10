@@ -71,6 +71,7 @@ export async function adminView() {
         .filter((p) => p.google)
         .map((p) => `<li><span class="who">${esc(p.name)}<small>${esc(p.google)}</small></span><button class="btn small ghost" data-unlock="${p.id}" data-revealed="${p.revealed ? 1 : 0}">Unlink</button></li>`)
         .join('')}</ul>
+      <p class="error" id="unlink-err" hidden></p>
     </section>`
         : ''
     }
@@ -206,8 +207,15 @@ export async function adminView() {
     b.addEventListener('click', async () => {
       const warn = b.dataset.revealed === '1' ? '\n\n⚠️ This person has already opened their envelope, so whoever linked it may have seen the match.' : '';
       if (!confirm(`Unlink this Google account? Everyone will see this in the log.${warn}`)) return;
-      await api('/admin/unlock-claim', { body: { id: Number(b.dataset.unlock) } });
-      adminView();
+      $('#unlink-err').hidden = true;
+      try {
+        await busy(b, 'Unlinking…', () => api('/admin/unlock-claim', { body: { id: Number(b.dataset.unlock) } }));
+        adminView();
+      } catch (e) {
+        // Admin session expired: show the password form again.
+        if (e instanceof ApiError && e.adminLocked) return adminView();
+        showError('#unlink-err', e);
+      }
     }),
   );
 
@@ -254,7 +262,7 @@ function lockScreen(me: Me) {
     ${logo('Admin panel 🔒')}
     <section class="card festive">
       <h2>Enter the admin password</h2>
-      <p class="muted">Every try is shown in the activity log. After 5 wrong tries, wait 15 minutes.</p>
+      <p class="muted">Every try is shown in the activity log. After 5 wrong tries, wait 15 minutes (20 wrong tries: wait a day).</p>
       <form id="unlock" class="stack">
         <input id="pw" type="password" autocomplete="current-password" aria-label="Admin password" required />
         <p class="error" id="pw-err" hidden></p>

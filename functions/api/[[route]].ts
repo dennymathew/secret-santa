@@ -128,12 +128,12 @@ app.post('/google/claim', async (c) => {
 });
 
 // ---------- Participant ----------
-/** Kids an adult may open envelopes for: kids in the same family group. */
+/** Kids an adult may open envelopes for: kids in the same family group, as saved from the list. */
 async function kidsOf(db: D1Database, adult: Participant | null) {
-  if (!adult || adult.is_kid || !adult.family) return [];
+  if (!adult || adult.is_kid || adult.family_group == null) return [];
   const { results } = await db
-    .prepare('SELECT * FROM participants WHERE is_kid = 1 AND family = ? COLLATE NOCASE ORDER BY name')
-    .bind(adult.family)
+    .prepare('SELECT * FROM participants WHERE is_kid = 1 AND family_group = ? ORDER BY name')
+    .bind(adult.family_group)
     .all<Participant>();
   return results;
 }
@@ -285,30 +285,49 @@ admin.use('*', async (c, next) => {
 
 const actorName = (who: Who) => who.participant?.name ?? 'The organizer';
 
+// admin_logins.ok: 1 = correct, 0 = wrong (or still being checked), -1 = refused by the limit (not a guess).
+const TRIES_PER_15_MIN = 5;
+const TRIES_PER_DAY = 20;
+
 /**
- * Checks the admin password with a brute-force limit: 5 wrong tries per person per 15 minutes,
- * 20 wrong tries in total per hour. Every try is recorded; returns an error response or null if correct.
+ * Checks the admin password with a per-person brute-force limit: 5 wrong tries per 15 minutes and
+ * 20 per day. There is no shared limit, so nobody can lock the real admin out by guessing wrong.
+ * Every try is recorded BEFORE the password is checked, so tries sent in parallel all count.
+ * Returns an error response, or null if the password is correct.
  */
 async function checkPassword(c: Context<App>, password: unknown) {
   const db = c.env.DB;
   const who = c.get('who');
   if (!c.env.ADMIN_PASSWORD_HASH)
     return c.json({ error: "The admin password hasn't been set up yet (see the README: set-admin-password.sh)." }, 503);
-  const mine = await db
-    .prepare("SELECT COUNT(*) AS n FROM admin_logins WHERE ok = 0 AND identity = ? AND ts > datetime('now', '-15 minutes')")
+  // Claim this try first (as wrong), then count: the n-th parallel try always sees at least n.
+  const attempt = await db.prepare('INSERT INTO admin_logins (identity, ok) VALUES (?, 0)').bind(who.idKey).run();
+  const attemptId = attempt.meta.last_row_id;
+  const counts = await db
+    .prepare(
+      `SELECT SUM(CASE WHEN ts > datetime('now', '-15 minutes') THEN 1 ELSE 0 END) AS recent, COUNT(*) AS today
+       FROM admin_logins WHERE ok = 0 AND identity = ? AND ts > datetime('now', '-1 day')`,
+    )
     .bind(who.idKey)
-    .first<{ n: number }>();
-  const all = await db
-    .prepare("SELECT COUNT(*) AS n FROM admin_logins WHERE ok = 0 AND ts > datetime('now', '-60 minutes')")
-    .first<{ n: number }>();
-  if ((mine?.n ?? 0) >= 5 || (all?.n ?? 0) >= 20)
-    return c.json({ error: 'Too many wrong passwords. Please wait 15 minutes and try again.' }, 429);
+    .first<{ recent: number; today: number }>();
+  if ((counts?.recent ?? 0) > TRIES_PER_15_MIN || (counts?.today ?? 0) > TRIES_PER_DAY) {
+    await db.prepare('UPDATE admin_logins SET ok = -1 WHERE id = ?').bind(attemptId).run();
+    return c.json(
+      {
+        error:
+          (counts?.today ?? 0) > TRIES_PER_DAY
+            ? 'Too many wrong passwords today. Please try again tomorrow.'
+            : 'Too many wrong passwords. Please wait 15 minutes and try again.',
+      },
+      429,
+    );
+  }
   const ok = typeof password === 'string' && (await verifyPassword(password, c.env.ADMIN_PASSWORD_HASH));
-  await db.prepare('INSERT INTO admin_logins (identity, ok) VALUES (?, ?)').bind(who.idKey, ok ? 1 : 0).run();
   if (!ok) {
     await logEvent(db, 'admin_login_failed', actorName(who));
     return c.json({ error: "That password isn't right." }, 403);
   }
+  await db.prepare('UPDATE admin_logins SET ok = 1 WHERE id = ?').bind(attemptId).run();
   return null;
 }
 
@@ -347,45 +366,74 @@ admin.post('/reset', async (c) => {
 });
 
 interface ImportBody {
-  participants: Array<{ name: string; email?: string | null; family?: string | null; kid?: boolean }>;
-  exclusions?: Array<[string, string]>;
+  participants: unknown;
+  exclusions?: unknown;
 }
+
+/** A text field from the request: '' if missing, null if it isn't text at all. */
+const text = (v: unknown): string | null => (v == null ? '' : typeof v === 'string' ? v : null);
 
 admin.post('/participants', async (c) => {
   const game = await gameStatus(c.env.DB);
   if (game.status !== 'draft') return c.json({ error: 'The game has already started. The list is locked.' }, 409);
   const body = await c.req.json<ImportBody>().catch(() => null);
-  if (!body?.participants?.length) return c.json({ error: 'No participants given.' }, 400);
+  if (!body || typeof body !== 'object' || !Array.isArray(body.participants) || !body.participants.length)
+    return c.json({ error: 'No participants given.' }, 400);
+  if (body.exclusions != null && !Array.isArray(body.exclusions))
+    return c.json({ error: 'Please fix the list.', details: ['The "never match" pairs must be a list.'] }, 400);
 
   const errors: string[] = [];
   const seenEmails = new Set<string>();
   const seenNames = new Set<string>();
-  const rows = body.participants.map((p, i) => {
-    const name = (p.name ?? '').trim();
+  // Family groups come from the list itself: the same family name (ignoring case) is one group.
+  const groupOf = new Map<string, number>();
+  const rows = (body.participants as unknown[]).map((raw, i) => {
+    const p = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const rawName = text(p.name);
+    const rawEmail = text(p.email);
+    const rawFamily = text(p.family);
+    const name = (rawName ?? '').trim();
     const kid = !!p.kid;
-    const family = (p.family ?? '').trim() || null;
-    const email = kid ? null : (p.email ?? '').trim().toLowerCase() || null;
+    const family = (rawFamily ?? '').trim() || null;
+    const email = kid ? null : (rawEmail ?? '').trim().toLowerCase() || null;
     const label = `Row ${i + 1}${name ? ` (${name})` : ''}`;
-    if (!name) errors.push(`${label}: name is missing.`);
+    if (!raw || typeof raw !== 'object') errors.push(`${label}: isn't a person (expected a name, email, family and kid).`);
+    else if (rawName === null) errors.push(`${label}: the name must be text.`);
+    else if (!name) errors.push(`${label}: name is missing.`);
+    if (rawEmail === null && !kid) errors.push(`${label}: the email must be text.`);
+    if (rawFamily === null) errors.push(`${label}: the family must be text.`);
     if (email && !isEmail(email)) errors.push(`${label}: "${email}" isn't a valid email address.`);
     if (kid && !family) errors.push(`${label}: kids must be listed under a family, so their parents can open their envelope.`);
     if (email && seenEmails.has(email)) errors.push(`${label}: duplicate email.`);
     if (name && seenNames.has(name.toLowerCase())) errors.push(`${label}: duplicate name. Add a surname or initial.`);
     if (email) seenEmails.add(email);
-    seenNames.add(name.toLowerCase());
-    return { name, email, family, kid };
+    if (name) seenNames.add(name.toLowerCase());
+    let familyGroup: number | null = null;
+    if (family) {
+      const key = family.toLowerCase();
+      if (!groupOf.has(key)) groupOf.set(key, groupOf.size + 1);
+      familyGroup = groupOf.get(key)!;
+    }
+    return { name, email, family, familyGroup, kid };
   });
-  const adultFamilies = new Set(rows.filter((r) => !r.kid && r.family).map((r) => r.family!.toLowerCase()));
+  const adultGroups = new Set(rows.filter((r) => !r.kid && r.familyGroup != null).map((r) => r.familyGroup));
   for (const r of rows)
-    if (r.kid && r.family && !adultFamilies.has(r.family.toLowerCase()))
+    if (r.kid && r.familyGroup != null && !adultGroups.has(r.familyGroup))
       errors.push(`${r.name}: family "${r.family}" has no adult to open the envelope.`);
-  const byName = new Map(rows.map((r) => [r.name.toLowerCase(), r]));
-  for (const [a, b] of body.exclusions ?? []) {
+  const byName = new Map(rows.filter((r) => r.name).map((r) => [r.name.toLowerCase(), r]));
+  const exclusions: Array<[string, string]> = [];
+  ((body.exclusions ?? []) as unknown[]).forEach((pair, i) => {
+    const [a, b] = Array.isArray(pair) ? pair : [];
+    if (!Array.isArray(pair) || pair.length !== 2 || typeof a !== 'string' || typeof b !== 'string' || !a.trim() || !b.trim()) {
+      errors.push(`Never-match pair ${i + 1}: needs exactly two names.`);
+      return;
+    }
     const ra = byName.get(a.trim().toLowerCase());
     const rb = byName.get(b.trim().toLowerCase());
     if (!ra || !rb) errors.push(`Exclusion "${a} / ${b}": both names must be on the list.`);
     else if (ra.kid !== rb.kid) errors.push(`Exclusion "${a} / ${b}": kids and adults are in separate draws already.`);
-  }
+    else exclusions.push([a, b]);
+  });
   const adultCount = rows.filter((r) => !r.kid).length;
   const kidCount = rows.length - adultCount;
   if (adultCount < 3) errors.push('You need at least 3 adults.');
@@ -414,13 +462,15 @@ admin.post('/participants', async (c) => {
     db.prepare('DELETE FROM participants'),
     ...final.map((r) =>
       db
-        .prepare('INSERT INTO participants (name, google_email, google_claimed_at, family, is_kid) VALUES (?, ?, ?, ?, ?)')
-        .bind(r.name, r.email, r.claimedAt, r.family, r.kid ? 1 : 0),
+        .prepare(
+          'INSERT INTO participants (name, google_email, google_claimed_at, family, family_group, is_kid) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .bind(r.name, r.email, r.claimedAt, r.family, r.familyGroup, r.kid ? 1 : 0),
     ),
   ]);
   const { results: saved } = await db.prepare('SELECT id, name FROM participants').all<{ id: number; name: string }>();
   const idOf = new Map(saved.map((s) => [s.name.toLowerCase(), s.id]));
-  const ex = (body.exclusions ?? []).map(([a, b]) => [idOf.get(a.trim().toLowerCase())!, idOf.get(b.trim().toLowerCase())!]);
+  const ex = exclusions.map(([a, b]) => [idOf.get(a.trim().toLowerCase())!, idOf.get(b.trim().toLowerCase())!]);
   if (ex.length)
     await db.batch(ex.map(([a, b]) => db.prepare('INSERT OR IGNORE INTO exclusions (a_id, b_id) VALUES (?, ?)').bind(a, b)));
   return c.json({ ok: true, adults: adultCount, kids: kidCount, exclusions: ex.length, check: await drawCheck(db) });
@@ -440,15 +490,16 @@ admin.get('/participants', async (c) => {
 
 /** Loads the saved list and runs the draw (rules loosened only if needed). Nothing is saved. */
 async function runDraw(db: D1Database) {
-  const { results: people } = await db.prepare('SELECT id, name, family, is_kid FROM participants').all<{
+  const { results: people } = await db.prepare('SELECT id, name, family_group, is_kid FROM participants').all<{
     id: number;
     name: string;
-    family: string | null;
+    family_group: number | null;
     is_kid: number;
   }>();
   const { results: ex } = await db.prepare('SELECT a_id, b_id FROM exclusions').all<{ a_id: number; b_id: number }>();
   const { assignment, relaxed } = drawPoolsSafe(
-    people.map((p) => ({ ...p, isKid: !!p.is_kid })),
+    // The family rule uses the groups saved from the list, the same ones that decide who opens a kid's envelope.
+    people.map((p) => ({ id: p.id, name: p.name, family: p.family_group == null ? null : `group:${p.family_group}`, isKid: !!p.is_kid })),
     ex.map((e) => [e.a_id, e.b_id]),
   );
   return { people, assignment, relaxed };
@@ -487,13 +538,21 @@ admin.post('/start', async (c) => {
   const key = await getKey(c.env.MATCH_KEY);
   const sealed = await Promise.all([...result].map(async ([g, r]) => ({ g, ...(await seal(key, g, r)) })));
   const startedAt = now();
-  const upd = await db.batch([
-    db.prepare("UPDATE game SET status = 'started', started_at = ? WHERE id = 1 AND status = 'draft'").bind(startedAt),
-    ...sealed.map((s) =>
-      db.prepare('INSERT INTO assignments (giver_id, ciphertext, iv) VALUES (?, ?, ?)').bind(s.g, s.ciphertext, s.iv),
-    ),
-  ]);
-  if (!upd[0].meta.changes) return c.json({ error: 'The game has already started.' }, 409);
+  const alreadyStarted = () => c.json({ error: 'The game has already started.' }, 409);
+  let upd: D1Result[];
+  try {
+    upd = await db.batch([
+      db.prepare("UPDATE game SET status = 'started', started_at = ? WHERE id = 1 AND status = 'draft'").bind(startedAt),
+      ...sealed.map((s) =>
+        db.prepare('INSERT INTO assignments (giver_id, ciphertext, iv) VALUES (?, ?, ?)').bind(s.g, s.ciphertext, s.iv),
+      ),
+    ]);
+  } catch (e) {
+    // Two Starts at once: the other one saved its envelopes first, so ours clash and are rolled back.
+    if ((await gameStatus(db)).status === 'started') return alreadyStarted();
+    throw e;
+  }
+  if (!upd[0].meta.changes) return alreadyStarted();
   const loosened = relaxed.length ? `. Rules loosened: ${relaxed.map((r) => r.message).join(' ')}` : '';
   await logEvent(db, 'game_started', null, `${people.length} participants${loosened}`);
   // Note: the result is deliberately NOT returned.

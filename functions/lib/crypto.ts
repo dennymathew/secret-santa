@@ -1,12 +1,5 @@
 // AES-GCM sealing of assignments. The key is MATCH_KEY (32 random bytes, base64) and is never stored in the DB.
-
-const b64 = (buf: ArrayBuffer | Uint8Array) => {
-  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-  let s = '';
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s);
-};
-const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+import { b64, unb64 } from './base64';
 
 let cached: { raw: string; key: CryptoKey } | null = null;
 
