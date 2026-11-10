@@ -1,4 +1,4 @@
-import { logo, render, esc, go, on, $, busy, showError, spinner, footer } from '../ui';
+import { logo, render, esc, go, on, $, busy, showError, spinner, footer, fmtTime } from '../ui';
 import { api, ApiError, type Board, type Me } from '../api';
 import { ADMIN_KEY } from '../auth';
 import { unsealPanel } from './board';
@@ -8,9 +8,10 @@ export async function adminView() {
   spinner();
   const me = await api<Me>('/me');
   if (!me.isAdmin) return lockScreen(me);
-  const [list, board] = await Promise.all([
+  const [list, board, { requests }] = await Promise.all([
     api<{ participants: Array<{ id: number; name: string; email: string | null; family: string | null; is_kid: number }>; exclusions: Array<{ a: string; b: string }> }>('/admin/participants'),
     api<Board>('/board'),
+    api<{ requests: AccessRequest[] }>('/admin/access-requests'),
   ]);
   const draft = me.game.status !== 'started';
   const check =
@@ -61,6 +62,8 @@ export async function adminView() {
       <button class="btn" id="start" ${list.participants.filter((p) => !p.is_kid).length < 3 ? 'disabled' : ''}>Start Secret Santa 🎁</button>
     </section>`
     }
+
+    ${requestsCard(requests, started)}
 
     ${
       board.participants.some((p) => p.google)
@@ -219,6 +222,31 @@ export async function adminView() {
     }),
   );
 
+  // Access requests: "Add to the list" puts them in the editor (Save the list to finish), "Dismiss" deletes the request.
+  document.querySelectorAll<HTMLButtonElement>('[data-req-add]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const r = requests.find((x) => x.id === Number(b.dataset.reqAdd));
+      if (!r || !editor) return;
+      if (!editor.addAdult(`${r.firstName} ${r.lastName}`, r.email))
+        return showError('#req-err', new Error(`${r.firstName} ${r.lastName} is already on the list. Add their email there, or change the name.`));
+      $('#req-err').hidden = true;
+      b.disabled = true;
+      b.textContent = 'Added below ✓ Save the list to finish';
+    }),
+  );
+  document.querySelectorAll<HTMLButtonElement>('[data-req-dismiss]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Dismiss this request? It is deleted. They can send a new one.')) return;
+      try {
+        await busy(b, 'Dismissing…', () => api('/admin/access-requests/dismiss', { body: { id: Number(b.dataset.reqDismiss) } }));
+        adminView();
+      } catch (e) {
+        if (e instanceof ApiError && e.adminLocked) return adminView();
+        showError('#req-err', e);
+      }
+    }),
+  );
+
   on('#req', 'click', async () => {
     if (!confirm('Ask the group to approve unsealing ALL Secret Santas? Everyone will see this request.')) return;
     try {
@@ -244,6 +272,40 @@ export async function adminView() {
       showError('#un-err', e);
     }
   });
+}
+
+type AccessRequest = {
+  id: number;
+  firstName: string;
+  lastName: string;
+  email: string;
+  googleEmail: string;
+  googleName: string | null;
+  sentAt: string;
+};
+
+/** People who signed in with Google, weren't on the list, and asked to be added. */
+function requestsCard(requests: AccessRequest[], started: boolean): string {
+  if (!requests.length) return '';
+  return `<section class="card">
+    <h2>🙋 Access requests <span class="pill">${requests.length}</span></h2>
+    <p class="muted">${
+      started
+        ? 'The draw has started, so the list is locked. To add someone, restart with Redraw (Danger zone), then add them.'
+        : '<b>Add to the list</b> puts them under Singles in the list below (move them to a family if needed). <b>Save the list</b> to finish: the request then disappears.'
+    }</p>
+    <ul class="people">${requests
+      .map(
+        (r) => `<li class="req"><span class="who">${esc(r.firstName)} ${esc(r.lastName)}
+          <small>${esc(r.email)}${r.googleEmail !== r.email ? ` · signed in as ${esc(r.googleEmail)}` : ''}${r.googleName ? ` · Google name: ${esc(r.googleName)}` : ''} · ${esc(fmtTime(r.sentAt))}</small></span>
+          <span class="req-actions">
+            ${started ? '' : `<button class="btn small green" data-req-add="${r.id}">Add to the list</button>`}
+            <button class="btn small ghost" data-req-dismiss="${r.id}">Dismiss</button>
+          </span></li>`,
+      )
+      .join('')}</ul>
+    <p class="error" id="req-err" hidden></p>
+  </section>`;
 }
 
 /** Result of the server's test draw on the saved list, shown above the Start button. */

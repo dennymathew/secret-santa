@@ -15,7 +15,7 @@ export async function homeView() {
       <span class="big-emoji wiggle">⛄</span>
       <h2>Hi, ${esc(p.name)}! 👋</h2>
       <p>The elves are still wrapping. The draw hasn't started yet.</p>
-      <p class="muted">Come back when the admin shares the go-ahead in the WhatsApp group.</p>
+      <p class="muted">Come back when the admin gives the go-ahead.</p>
     </section>`;
   } else if (!p.revealedAt) {
     main = `<section class="card festive center">

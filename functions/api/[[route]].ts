@@ -112,12 +112,61 @@ app.post('/google/match', async (c) => {
   return c.json({
     claimed: false,
     googleName: identity.name,
+    email: identity.email,
     organizer,
     organizerName: organizerName(c.env),
     result: m.kind,
     candidate: m.kind === 'name' || m.kind === 'taken' ? { id: m.p.id, name: m.p.name } : null,
     replacesEmail: m.kind === 'name' && m.replacesEmail,
+    request: await myAccessRequest(c.env.DB, identity.email),
   });
+});
+
+// ---------- Not on the list: request access ----------
+type AccessRequest = {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  google_email: string;
+  google_name: string | null;
+  created_at: string;
+};
+const MAX_OPEN_REQUESTS = 100;
+
+async function myAccessRequest(db: D1Database, googleEmail: string) {
+  const r = await db.prepare('SELECT * FROM access_requests WHERE google_email = ?').bind(googleEmail).first<AccessRequest>();
+  return r ? { firstName: r.first_name, lastName: r.last_name, email: r.email, sentAt: r.created_at } : null;
+}
+
+/** Someone signed in with Google but isn't on the list asks to be added. The admin sees it in the admin panel. */
+app.post('/access-request', async (c) => {
+  const { identity, participant } = c.get('who');
+  if (participant) return c.json({ error: "You're already on the list." }, 409);
+  const body = (await c.req.json<Record<string, unknown>>().catch(() => null)) ?? {};
+  const field = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const firstName = field(body.firstName);
+  const lastName = field(body.lastName);
+  const email = field(body.email).toLowerCase();
+  const errors: string[] = [];
+  if (!firstName || firstName.length > 60) errors.push('Please enter your first name.');
+  if (!lastName || lastName.length > 60) errors.push('Please enter your last name.');
+  if (!isEmail(email) || email.length > 254) errors.push('Please enter a valid email address.');
+  if (errors.length) return c.json({ error: 'Please check the form.', details: errors }, 400);
+  const db = c.env.DB;
+  const open = await db.prepare('SELECT COUNT(*) AS n FROM access_requests WHERE google_email != ?').bind(identity.email).first<{ n: number }>();
+  if ((open?.n ?? 0) >= MAX_OPEN_REQUESTS)
+    return c.json({ error: 'Santa has too many requests right now. Please try again later.' }, 429);
+  // One request per Google account: sending again updates it.
+  await db
+    .prepare(
+      `INSERT INTO access_requests (first_name, last_name, email, google_email, google_name) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(google_email) DO UPDATE SET first_name = excluded.first_name, last_name = excluded.last_name,
+         email = excluded.email, google_name = excluded.google_name, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+    )
+    .bind(firstName, lastName, email, identity.email, identity.name || null)
+    .run();
+  return c.json({ ok: true, request: await myAccessRequest(db, identity.email) });
 });
 
 app.post('/google/claim', async (c) => {
@@ -381,7 +430,7 @@ admin.post('/reset', async (c) => {
     db.prepare('DELETE FROM events'),
     db.prepare("UPDATE game SET status = 'draft', started_at = NULL WHERE id = 1"),
     ...(mode === 'wipe'
-      ? [db.prepare('DELETE FROM exclusions'), db.prepare('DELETE FROM participants')]
+      ? [db.prepare('DELETE FROM exclusions'), db.prepare('DELETE FROM participants'), db.prepare('DELETE FROM access_requests')]
       : [db.prepare('UPDATE participants SET revealed_at = NULL')]),
   ]);
   await logEvent(db, 'game_reset', actorName(c.get('who')), mode === 'wipe' ? 'everything wiped' : 'list kept, new draw needed');
@@ -502,6 +551,11 @@ admin.post('/participants', async (c) => {
         )
         .bind(r.name, r.email, r.claimedAt, r.seenAt, r.family, r.familyGroup, r.kid ? 1 : 0),
     ),
+    // Requests whose email is now on the list are done.
+    db.prepare(
+      `DELETE FROM access_requests WHERE email IN (SELECT google_email FROM participants WHERE google_email IS NOT NULL)
+         OR google_email IN (SELECT google_email FROM participants WHERE google_email IS NOT NULL)`,
+    ),
   ]);
   const { results: saved } = await db.prepare('SELECT id, name FROM participants').all<{ id: number; name: string }>();
   const idOf = new Map(saved.map((s) => [s.name.toLowerCase(), s.id]));
@@ -592,6 +646,27 @@ admin.post('/start', async (c) => {
   await logEvent(db, 'game_started', null, `${people.length} participants${loosened}`);
   // Note: the result is deliberately NOT returned.
   return c.json({ ok: true, startedAt });
+});
+
+admin.get('/access-requests', async (c) => {
+  const { results } = await c.env.DB.prepare('SELECT * FROM access_requests ORDER BY created_at').all<AccessRequest>();
+  return c.json({
+    requests: results.map((r) => ({
+      id: r.id,
+      firstName: r.first_name,
+      lastName: r.last_name,
+      email: r.email,
+      googleEmail: r.google_email,
+      googleName: r.google_name,
+      sentAt: r.created_at,
+    })),
+  });
+});
+
+admin.post('/access-requests/dismiss', async (c) => {
+  const { id } = await c.req.json<{ id?: number }>().catch(() => ({ id: undefined }));
+  await c.env.DB.prepare('DELETE FROM access_requests WHERE id = ?').bind(Number(id)).run();
+  return c.json({ ok: true });
 });
 
 admin.post('/unlock-claim', async (c) => {
