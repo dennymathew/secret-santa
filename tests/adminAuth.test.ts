@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hashPassword, verifyPassword, signSession, verifySession, SESSION_TTL_MS } from '../functions/lib/adminAuth';
+import { hashPassword, verifyPassword, signSession, verifySession, SESSION_TTL_MS, personalAdminHashes, adminHashFor } from '../functions/lib/adminAuth';
 import { fakeAuthAllowed, isTestMode } from '../functions/lib/auth';
 
 const KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
@@ -72,5 +72,38 @@ describe('test mode gate', () => {
     expect(fakeAuthAllowed({ CF_PAGES_BRANCH: 'test' }, 'test.berlinmallusanta.pages.dev')).toBe(false);
     expect(isTestMode({ TEST_MODE: '1', CF_PAGES_BRANCH: 'main' })).toBe(false);
     expect(isTestMode({ TEST_MODE: '1', CF_PAGES_BRANCH: 'test' })).toBe(true);
+  });
+});
+
+describe('personal admin passwords', () => {
+  const env = {
+    ADMIN_PASSWORD_HASH: 'shared-hash',
+    ADMIN_PW_DENNY_GMAIL_COM: 'Denny@Gmail.com|denny-hash',
+    ADMIN_PW_ANU_GMAIL_COM: ' anu@gmail.com | anu-hash ',
+    ADMIN_PW_BROKEN: 'no-bar-here',
+    ADMIN_EMAILS: 'x@y.com',
+  };
+  it('reads one email and hash from each ADMIN_PW_* secret, ignoring malformed ones', () => {
+    expect([...personalAdminHashes(env)]).toEqual([
+      ['denny@gmail.com', 'denny-hash'],
+      ['anu@gmail.com', 'anu-hash'],
+    ]);
+  });
+  it('gives each admin their own password, and everyone else the shared one', () => {
+    expect(adminHashFor(env, 'DENNY@gmail.com')).toBe('denny-hash');
+    expect(adminHashFor(env, 'anu@gmail.com')).toBe('anu-hash');
+    expect(adminHashFor(env, 'someone@gmail.com')).toBe('shared-hash');
+  });
+  it('without a shared password, only the named admins have one', () => {
+    const { ADMIN_PASSWORD_HASH: _, ...noShared } = env;
+    expect(adminHashFor(noShared, 'someone@gmail.com')).toBeUndefined();
+    expect(adminHashFor(noShared, 'anu@gmail.com')).toBe('anu-hash');
+  });
+  it("one admin's session doesn't work with another admin's password", async () => {
+    const denny = await hashPassword('denny-password-1', 10_000);
+    const anu = await hashPassword('anu-password-12', 10_000);
+    const { token } = await signSession(KEY, denny, 'google:denny@gmail.com');
+    expect(await verifySession(token, KEY, denny, 'google:denny@gmail.com')).toBe(true);
+    expect(await verifySession(token, KEY, anu, 'google:denny@gmail.com')).toBe(false);
   });
 });

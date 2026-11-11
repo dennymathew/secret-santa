@@ -5,7 +5,7 @@ import { verifyIdentity, isTestMode } from '../lib/auth';
 import { drawPoolsSafe, DrawError, type Relaxation } from '../lib/draw';
 import { getKey, seal, unseal } from '../lib/crypto';
 import { matchSignIn, maskEmail, isEmail, listFromEnv } from '../lib/nameMatch';
-import { identityKey, signSession, verifySession, verifyPassword } from '../lib/adminAuth';
+import { identityKey, signSession, verifySession, verifyPassword, adminHashFor, personalAdminHashes } from '../lib/adminAuth';
 
 type Who = {
   identity: Identity;
@@ -71,12 +71,14 @@ app.use('*', async (c, next) => {
       .bind(participant.google_seen_at, participant.id)
       .run();
   }
-  const organizer = listFromEnv(c.env.ADMIN_EMAILS).includes(identity.email);
+  // Organizers may sign in before they're on the list: ADMIN_EMAILS, and everyone with a personal admin password.
+  const organizer =
+    listFromEnv(c.env.ADMIN_EMAILS).includes(identity.email) || personalAdminHashes(c.env).has(identity.email);
   const idKey = identityKey(identity);
   // Admin = a valid session from POST /admin/login, for this exact person and the current password.
   const isAdmin =
     (!!participant || organizer) &&
-    (await verifySession(c.req.header('X-Admin-Session'), c.env.MATCH_KEY, c.env.ADMIN_PASSWORD_HASH, idKey));
+    (await verifySession(c.req.header('X-Admin-Session'), c.env.MATCH_KEY, adminHashFor(c.env, identity.email), idKey));
   c.set('who', { identity, idKey, participant, organizer, isAdmin });
   await next();
 });
@@ -136,7 +138,7 @@ const MAX_OPEN_REQUESTS = 100;
 
 async function myAccessRequest(db: D1Database, googleEmail: string) {
   const r = await db.prepare('SELECT * FROM access_requests WHERE google_email = ?').bind(googleEmail).first<AccessRequest>();
-  return r ? { firstName: r.first_name, lastName: r.last_name, email: r.email, sentAt: r.created_at } : null;
+  return r ? { firstName: r.first_name, email: r.email, sentAt: r.created_at } : null;
 }
 
 /** Someone signed in with Google but isn't on the list asks to be added. The admin sees it in the admin panel. */
@@ -146,11 +148,9 @@ app.post('/access-request', async (c) => {
   const body = (await c.req.json<Record<string, unknown>>().catch(() => null)) ?? {};
   const field = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
   const firstName = field(body.firstName);
-  const lastName = field(body.lastName);
   const email = field(body.email).toLowerCase();
   const errors: string[] = [];
   if (!firstName || firstName.length > 60) errors.push('Please enter your first name.');
-  if (!lastName || lastName.length > 60) errors.push('Please enter your last name.');
   if (!isEmail(email) || email.length > 254) errors.push('Please enter a valid email address.');
   if (errors.length) return c.json({ error: 'Please check the form.', details: errors }, 400);
   const db = c.env.DB;
@@ -164,7 +164,8 @@ app.post('/access-request', async (c) => {
        ON CONFLICT(google_email) DO UPDATE SET first_name = excluded.first_name, last_name = excluded.last_name,
          email = excluded.email, google_name = excluded.google_name, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     )
-    .bind(firstName, lastName, email, identity.email, identity.name || null)
+    // last_name is no longer asked for (kept in the table, always empty now).
+    .bind(firstName, '', email, identity.email, identity.name || null)
     .run();
   return c.json({ ok: true, request: await myAccessRequest(db, identity.email) });
 });
@@ -370,8 +371,12 @@ const TRIES_PER_DAY = 20;
 async function checkPassword(c: Context<App>, password: unknown) {
   const db = c.env.DB;
   const who = c.get('who');
-  if (!c.env.ADMIN_PASSWORD_HASH)
-    return c.json({ error: "The admin password hasn't been set up yet (see the README: set-admin-password.sh)." }, 503);
+  // This person's own admin password, or the shared one (see adminHashFor).
+  const hash = adminHashFor(c.env, who.identity.email);
+  if (!hash)
+    return personalAdminHashes(c.env).size
+      ? c.json({ error: 'Only the admins can unlock the admin panel.' }, 403)
+      : c.json({ error: "The admin password hasn't been set up yet (see the README: set-admin-password.sh)." }, 503);
   // Claim this try first (as wrong), then count: the n-th parallel try always sees at least n.
   const attempt = await db.prepare('INSERT INTO admin_logins (identity, ok) VALUES (?, 0)').bind(who.idKey).run();
   const attemptId = attempt.meta.last_row_id;
@@ -394,7 +399,7 @@ async function checkPassword(c: Context<App>, password: unknown) {
       429,
     );
   }
-  const ok = typeof password === 'string' && (await verifyPassword(password, c.env.ADMIN_PASSWORD_HASH));
+  const ok = typeof password === 'string' && (await verifyPassword(password, hash));
   if (!ok) {
     await logEvent(db, 'admin_login_failed', actorName(who));
     return c.json({ error: "That password isn't right." }, 403);
@@ -411,7 +416,8 @@ admin.post('/login', async (c) => {
   const fail = await checkPassword(c, password);
   if (fail) return fail;
   await logEvent(c.env.DB, 'admin_unlocked', actorName(who));
-  return c.json(await signSession(c.env.MATCH_KEY, c.env.ADMIN_PASSWORD_HASH!, who.idKey));
+  // The session is tied to this admin's own password: changing it logs out only them.
+  return c.json(await signSession(c.env.MATCH_KEY, adminHashFor(c.env, who.identity.email)!, who.idKey));
 });
 
 // Restart: "redraw" keeps the list, "wipe" deletes everything. Needs the password typed again.

@@ -216,8 +216,8 @@ export async function adminView() {
     b.addEventListener('click', () => {
       const r = requests.find((x) => x.id === Number(b.dataset.reqAdd));
       if (!r || !editor) return;
-      if (!editor.addAdult(`${r.firstName} ${r.lastName}`, r.email))
-        return showError('#req-err', new Error(`${r.firstName} ${r.lastName} is already on the list. Add their email there, or change the name.`));
+      if (!editor.addAdult(`${r.firstName} ${r.lastName}`.trim(), r.email))
+        return showError('#req-err', new Error(`${`${r.firstName} ${r.lastName}`.trim()} is already on the list. Add their email there, or change the name.`));
       $('#req-err').hidden = true;
       b.disabled = true;
       b.textContent = 'Added below ✓ Save the list to finish';
@@ -230,7 +230,7 @@ export async function adminView() {
       const pid = Number(app().querySelector<HTMLSelectElement>(`[data-req-person="${id}"]`)!.value);
       const email = app().querySelector<HTMLSelectElement>(`[data-req-email="${id}"]`)?.value ?? r.googleEmail;
       const p = list.participants.find((x) => x.id === pid);
-      if (!p) return showError('#req-err', new Error(`Choose who ${r.firstName} ${r.lastName} is on the list.`));
+      if (!p) return showError('#req-err', new Error(`Choose who ${`${r.firstName} ${r.lastName}`.trim()} is on the list.`));
       const replaces = p.email && p.email !== email ? `\n\nThis replaces ${p.email}, which then can't sign in as ${p.name} any more.` : '';
       const unsaved = !started && !$('#dirty').hidden ? '\n\n⚠️ Your unsaved changes to the list below will be lost.' : '';
       if (!confirm(`Link ${email} to ${p.name}? Everyone will see this in the log.${replaces}${unsaved}`)) return;
@@ -326,7 +326,7 @@ function emailsCard(people: SavedPerson[], board: Board): string {
 /** Best guess for who a request is: same full name, else a unique first-name fit. */
 function guessPerson(r: AccessRequest, adults: ListAdult[]): number | null {
   const norm = (x: string) => x.trim().toLowerCase().replace(/\s+/g, ' ');
-  const full = norm(`${r.firstName} ${r.lastName}`);
+  const full = norm(`${r.firstName} ${r.lastName}`.trim());
   const exact = adults.filter((a) => norm(a.name) === full || (r.googleName && norm(a.name) === norm(r.googleName)));
   if (exact.length === 1) return exact[0].id;
   const first = norm(r.firstName);
@@ -354,7 +354,7 @@ function requestsCard(requests: AccessRequest[], started: boolean, adults: ListA
       .map((r) => {
         const guess = guessPerson(r, sorted);
         const two = r.googleEmail !== r.email;
-        return `<li class="req"><span class="who">${esc(r.firstName)} ${esc(r.lastName)}
+        return `<li class="req"><span class="who">${esc(`${r.firstName} ${r.lastName}`.trim())}
           <small>${esc(r.email)}${two ? ` · signed in as ${esc(r.googleEmail)}` : ''}${r.googleName ? ` · Google name: ${esc(r.googleName)}` : ''} · ${esc(fmtTime(r.sentAt))}</small></span>
           <div class="req-link">
             <select data-req-person="${r.id}" aria-label="Who is ${esc(r.firstName)} on the list?">
