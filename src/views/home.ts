@@ -5,9 +5,8 @@ export async function homeView() {
   spinner();
   const me = await api<Me>('/me');
   if (me.needsClaim) return redirect('#/claim');
-  if (!me.participant) return redirect('#/admin'); // an organizer who isn't on the list
 
-  const p = me.participant!;
+  const p = me.participant!; // needsClaim is false, so there is a participant
   const started = me.game.status === 'started';
   let main: string;
   if (!started) {
@@ -15,7 +14,7 @@ export async function homeView() {
       <span class="big-emoji wiggle">⛄</span>
       <h2>Hi, ${esc(p.name)}! 👋</h2>
       <p>The elves are still wrapping. The draw hasn't started yet.</p>
-      <p class="muted">Come back when the admin gives the go-ahead.</p>
+      <p class="muted">Come back when the admins give the go-ahead.</p>
     </section>`;
   } else if (!p.revealedAt) {
     main = `<section class="card festive center">
@@ -62,7 +61,7 @@ export async function homeView() {
     <div class="stack">
       ${started ? '<button class="btn ghost light" id="board">See who has found their Secret Santa 👀</button>' : ''}
     </div>
-    ${footer('<button class="link" id="admin">🛠 Admin</button>')}
+    ${footer()}
   `);
 
   let shown = false;
@@ -95,5 +94,4 @@ export async function homeView() {
     b.addEventListener('click', () => go(`#/reveal?kid=${b.dataset.kid}`)),
   );
   on('#board', 'click', () => go('#/board'));
-  on('#admin', 'click', () => go('#/admin'));
 }

@@ -2,15 +2,11 @@ export interface Env {
   DB: D1Database;
   MATCH_KEY: string;
   FIREBASE_PROJECT_ID: string;
-  /** Comma-separated emails that may sign in before they are on the list (to paste the first list). */
+  /** Old way to name admins. Read only to move them into the admins table at their first admin sign-in. */
   ADMIN_EMAILS?: string;
   GAME_ENDS_AT?: string;
   UNSEAL_QUORUM?: string;
-  /** Who people should ask to be added to the list (shown on the claim screen). Default: "the admin". */
-  ORGANIZER_NAME?: string;
   DEV_AUTH?: string;
-  /** PBKDF2 hash of the admin panel password (scripts/set-admin-password.sh). Unset = admin panel disabled. */
-  ADMIN_PASSWORD_HASH?: string;
   /** "1" on the test site (Pages preview environment). Ignored on the production branch. */
   TEST_MODE?: string;
   /** Set by Cloudflare Pages: the git branch of this deployment. */

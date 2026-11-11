@@ -138,7 +138,7 @@ export function mountListEditor(
           singles
             ? `<h3>🙋 Singles <small>no family in the game</small></h3>`
             : `<span aria-hidden="true">🏠</span>
-               <input data-g="${gi}" data-f="family" value="${esc(g.family)}" placeholder="Family name, e.g. Mathew" aria-label="Family name" autocomplete="off" autocapitalize="words" />
+               <input data-g="${gi}" data-f="family" value="${esc(g.family)}" placeholder="Family name" aria-label="Family name" autocomplete="off" autocapitalize="words" />
                <button class="icon-btn" data-act="del-family" data-g="${gi}" aria-label="Remove this family">🗑</button>`
         }
       </div>
