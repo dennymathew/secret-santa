@@ -136,7 +136,7 @@ const MAX_OPEN_REQUESTS = 100;
 
 async function myAccessRequest(db: D1Database, googleEmail: string) {
   const r = await db.prepare('SELECT * FROM access_requests WHERE google_email = ?').bind(googleEmail).first<AccessRequest>();
-  return r ? { firstName: r.first_name, lastName: r.last_name, email: r.email, sentAt: r.created_at } : null;
+  return r ? { firstName: r.first_name, email: r.email, sentAt: r.created_at } : null;
 }
 
 /** Someone signed in with Google but isn't on the list asks to be added. The admin sees it in the admin panel. */
@@ -146,11 +146,9 @@ app.post('/access-request', async (c) => {
   const body = (await c.req.json<Record<string, unknown>>().catch(() => null)) ?? {};
   const field = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
   const firstName = field(body.firstName);
-  const lastName = field(body.lastName);
   const email = field(body.email).toLowerCase();
   const errors: string[] = [];
   if (!firstName || firstName.length > 60) errors.push('Please enter your first name.');
-  if (!lastName || lastName.length > 60) errors.push('Please enter your last name.');
   if (!isEmail(email) || email.length > 254) errors.push('Please enter a valid email address.');
   if (errors.length) return c.json({ error: 'Please check the form.', details: errors }, 400);
   const db = c.env.DB;
@@ -164,7 +162,8 @@ app.post('/access-request', async (c) => {
        ON CONFLICT(google_email) DO UPDATE SET first_name = excluded.first_name, last_name = excluded.last_name,
          email = excluded.email, google_name = excluded.google_name, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     )
-    .bind(firstName, lastName, email, identity.email, identity.name || null)
+    // last_name is no longer asked for (kept in the table, always empty now).
+    .bind(firstName, '', email, identity.email, identity.name || null)
     .run();
   return c.json({ ok: true, request: await myAccessRequest(db, identity.email) });
 });
@@ -661,6 +660,41 @@ admin.get('/access-requests', async (c) => {
       sentAt: r.created_at,
     })),
   });
+});
+
+/**
+ * Approve a request by linking it to someone already on the list: their email becomes the requester's
+ * (replacing any email there). Works after the draw has started too, because the draw doesn't change.
+ */
+admin.post('/access-requests/link', async (c) => {
+  const body = await c.req.json<{ id?: number; participantId?: number; email?: string }>().catch(() => null);
+  const db = c.env.DB;
+  const req = await db.prepare('SELECT * FROM access_requests WHERE id = ?').bind(Number(body?.id)).first<AccessRequest>();
+  if (!req) return c.json({ error: 'That request is gone. Refresh the page.' }, 404);
+  const p = await db.prepare('SELECT * FROM participants WHERE id = ?').bind(Number(body?.participantId)).first<Participant>();
+  if (!p) return c.json({ error: 'Choose who this person is on the list.' }, 400);
+  if (p.is_kid) return c.json({ error: "Kids don't sign in, so they can't be linked to an account." }, 400);
+  // Either the Google account they signed in with, or the email they typed in the form.
+  const email = (body?.email ?? req.google_email).trim().toLowerCase();
+  if (email !== req.google_email && email !== req.email.toLowerCase())
+    return c.json({ error: 'Link the Google account they signed in with, or the email from their request.' }, 400);
+  const other = await db
+    .prepare('SELECT name FROM participants WHERE google_email = ? AND id != ?')
+    .bind(email, p.id)
+    .first<{ name: string }>();
+  if (other) return c.json({ error: `${email} is already linked to ${other.name}. Unlink it there first.` }, 409);
+  // Like an email the admin typed in: it locks to the person at their first sign-in.
+  await db.batch([
+    db.prepare('UPDATE participants SET google_email = ?, google_claimed_at = NULL, google_seen_at = NULL WHERE id = ?').bind(email, p.id),
+    db.prepare('DELETE FROM access_requests WHERE id = ? OR google_email = ?').bind(req.id, email),
+  ]);
+  await logEvent(
+    db,
+    'admin_linked',
+    p.name,
+    `${maskEmail(email)}${p.google_email && p.google_email !== email ? `, replacing ${maskEmail(p.google_email)}` : ''}`,
+  );
+  return c.json({ ok: true, wasRevealed: !!p.revealed_at });
 });
 
 admin.post('/access-requests/dismiss', async (c) => {

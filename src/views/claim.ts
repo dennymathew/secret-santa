@@ -17,7 +17,7 @@ type SignInCheck = {
   /** This Google account's "Request access" waiting for the admin, if any. */
   request?: AccessRequest | null;
 };
-type AccessRequest = { firstName: string; lastName: string; email: string; sentAt: string };
+type AccessRequest = { firstName: string; email: string; sentAt: string };
 
 /** Shown when this Google email isn't on the list yet: confirm who you are once, or Santa can't find you. */
 export async function claimView() {
@@ -82,11 +82,9 @@ export async function claimView() {
     $('#no').addEventListener('click', () => show(notFound(`You signed in with Google as ${who}.`), false));
   };
 
-  /** First name, last name and email. The admin sees the request in the admin panel. */
+  /** First name and email. The admin sees the request in the admin panel. */
   const requestForm = (back: string) => {
-    const g = (data.googleName ?? '').trim().split(/\s+/);
-    const first = request?.firstName ?? g[0] ?? '';
-    const last = request?.lastName ?? g.slice(1).join(' ');
+    const first = request?.firstName ?? (data.googleName ?? '').trim().split(/\s+/)[0] ?? '';
     render(`
       ${logo()}
       <section class="card festive">
@@ -94,7 +92,6 @@ export async function claimView() {
         <p class="muted">${ask} will review your request and add you to the list. Then sign in again.</p>
         <form id="req-form" class="stack" novalidate>
           <div><label for="rq-first">First name</label><input id="rq-first" autocomplete="given-name" autocapitalize="words" maxlength="60" value="${esc(first)}" required /></div>
-          <div><label for="rq-last">Last name</label><input id="rq-last" autocomplete="family-name" autocapitalize="words" maxlength="60" value="${esc(last)}" required /></div>
           <div><label for="rq-email">Email address</label><input id="rq-email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" maxlength="254" value="${esc(request?.email ?? data.email ?? '')}" required />
             <small class="muted">Sign in with this Google account once you're on the list.</small></div>
           <p class="error" id="rq-err" hidden></p>
@@ -113,7 +110,6 @@ export async function claimView() {
           api<{ request: AccessRequest }>('/access-request', {
             body: {
               firstName: $<HTMLInputElement>('#rq-first').value,
-              lastName: $<HTMLInputElement>('#rq-last').value,
               email: $<HTMLInputElement>('#rq-email').value,
             },
           }),

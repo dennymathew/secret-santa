@@ -162,6 +162,7 @@ textarea { min-height: 200px; font-family: ui-monospace, Menlo, monospace; font-
 .people .who { flex: 1; min-width: 0; }
 .people li.req { flex-wrap: wrap; }
 .people li.req .who small { white-space: normal; }
+.people li.req .req-link { flex-basis: 100%; display: grid; gap: 6px; }
 .people .req-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .people .who small { display: block; color: var(--muted); font-size: .78em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress { height: 14px; border-radius: 999px; background: #eadfce; overflow: hidden; }

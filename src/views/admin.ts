@@ -1,4 +1,4 @@
-import { logo, render, esc, go, on, $, busy, showError, spinner, footer, fmtTime } from '../ui';
+import { logo, render, esc, go, on, $, busy, showError, spinner, footer, fmtTime, app } from '../ui';
 import { api, ApiError, type Board, type Me } from '../api';
 import { ADMIN_KEY } from '../auth';
 import { unsealPanel } from './board';
@@ -9,7 +9,7 @@ export async function adminView() {
   const me = await api<Me>('/me');
   if (!me.isAdmin) return lockScreen(me);
   const [list, board, { requests }] = await Promise.all([
-    api<{ participants: Array<{ id: number; name: string; email: string | null; family: string | null; is_kid: number }>; exclusions: Array<{ a: string; b: string }> }>('/admin/participants'),
+    api<{ participants: SavedPerson[]; exclusions: Array<{ a: string; b: string }> }>('/admin/participants'),
     api<Board>('/board'),
     api<{ requests: AccessRequest[] }>('/admin/access-requests'),
   ]);
@@ -63,21 +63,9 @@ export async function adminView() {
     </section>`
     }
 
-    ${requestsCard(requests, started)}
+    ${requestsCard(requests, started, list.participants.filter((p) => !p.is_kid))}
 
-    ${
-      board.participants.some((p) => p.google)
-        ? `<section class="card">
-      <h2>🔗 Google links</h2>
-      <p class="muted">If someone linked the wrong person, unlink it. Everyone will see this in the log.</p>
-      <ul class="people">${board.participants
-        .filter((p) => p.google)
-        .map((p) => `<li><span class="who">${esc(p.name)}<small>${esc(p.google)}</small></span><button class="btn small ghost" data-unlock="${p.id}" data-revealed="${p.revealed ? 1 : 0}">Unlink</button></li>`)
-        .join('')}</ul>
-      <p class="error" id="unlink-err" hidden></p>
-    </section>`
-        : ''
-    }
+    ${emailsCard(list.participants, board)}
 
     ${
       started
@@ -222,16 +210,38 @@ export async function adminView() {
     }),
   );
 
-  // Access requests: "Add to the list" puts them in the editor (Save the list to finish), "Dismiss" deletes the request.
+  // Access requests: "Link" gives someone on the list this account; "Add as new person" puts them in the editor
+  // (Save the list to finish); "Dismiss" deletes the request.
   document.querySelectorAll<HTMLButtonElement>('[data-req-add]').forEach((b) =>
     b.addEventListener('click', () => {
       const r = requests.find((x) => x.id === Number(b.dataset.reqAdd));
       if (!r || !editor) return;
-      if (!editor.addAdult(`${r.firstName} ${r.lastName}`, r.email))
-        return showError('#req-err', new Error(`${r.firstName} ${r.lastName} is already on the list. Add their email there, or change the name.`));
+      if (!editor.addAdult(`${r.firstName} ${r.lastName}`.trim(), r.email))
+        return showError('#req-err', new Error(`${`${r.firstName} ${r.lastName}`.trim()} is already on the list. Add their email there, or change the name.`));
       $('#req-err').hidden = true;
       b.disabled = true;
       b.textContent = 'Added below ✓ Save the list to finish';
+    }),
+  );
+  document.querySelectorAll<HTMLButtonElement>('[data-req-link]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const id = Number(b.dataset.reqLink);
+      const r = requests.find((x) => x.id === id)!;
+      const pid = Number(app().querySelector<HTMLSelectElement>(`[data-req-person="${id}"]`)!.value);
+      const email = app().querySelector<HTMLSelectElement>(`[data-req-email="${id}"]`)?.value ?? r.googleEmail;
+      const p = list.participants.find((x) => x.id === pid);
+      if (!p) return showError('#req-err', new Error(`Choose who ${`${r.firstName} ${r.lastName}`.trim()} is on the list.`));
+      const replaces = p.email && p.email !== email ? `\n\nThis replaces ${p.email}, which then can't sign in as ${p.name} any more.` : '';
+      const unsaved = !started && !$('#dirty').hidden ? '\n\n⚠️ Your unsaved changes to the list below will be lost.' : '';
+      if (!confirm(`Link ${email} to ${p.name}? Everyone will see this in the log.${replaces}${unsaved}`)) return;
+      $('#req-err').hidden = true;
+      try {
+        await busy(b, 'Linking…', () => api('/admin/access-requests/link', { body: { id, participantId: pid, email } }));
+        adminView();
+      } catch (e) {
+        if (e instanceof ApiError && e.adminLocked) return adminView();
+        showError('#req-err', e);
+      }
     }),
   );
   document.querySelectorAll<HTMLButtonElement>('[data-req-dismiss]').forEach((b) =>
@@ -284,25 +294,93 @@ type AccessRequest = {
   sentAt: string;
 };
 
-/** People who signed in with Google, weren't on the list, and asked to be added. */
-function requestsCard(requests: AccessRequest[], started: boolean): string {
+type ListAdult = { id: number; name: string; email: string | null };
+type SavedPerson = { id: number; name: string; email: string | null; claimed_at: string | null; family: string | null; is_kid: number };
+
+/** Every adult's full email (admin only; the public board shows them masked), with Unlink. */
+function emailsCard(people: SavedPerson[], board: Board): string {
+  const adults = people.filter((p) => !p.is_kid).sort((a, b) => a.name.localeCompare(b.name));
+  if (!adults.length) return '';
+  const opened = new Set(board.participants.filter((p) => p.revealed).map((p) => p.id));
+  const linked = adults.filter((p) => p.email).length;
+  return `<section class="card">
+    <h2>📧 Emails and Google links <span class="pill">${linked} / ${adults.length}</span></h2>
+    <p class="muted">Everyone's email, in full (only you see this). If someone linked the wrong person, unlink it. Everyone will see this in the log.</p>
+    <ul class="people">${adults
+      .map(
+        (p) => `<li><span class="who">${esc(p.name)}<small>${
+          p.email
+            ? `${esc(p.email)} · ${p.claimed_at ? 'linked by Google name' : 'on the list'}`
+            : 'no email yet: signs in by Google name'
+        }</small></span>${
+          p.email
+            ? `<button class="btn small ghost" data-unlock="${p.id}" data-revealed="${opened.has(p.id) ? 1 : 0}">Unlink</button>`
+            : ''
+        }</li>`,
+      )
+      .join('')}</ul>
+    <p class="error" id="unlink-err" hidden></p>
+  </section>`;
+}
+
+/** Best guess for who a request is: same full name, else a unique first-name fit. */
+function guessPerson(r: AccessRequest, adults: ListAdult[]): number | null {
+  const norm = (x: string) => x.trim().toLowerCase().replace(/\s+/g, ' ');
+  const full = norm(`${r.firstName} ${r.lastName}`.trim());
+  const exact = adults.filter((a) => norm(a.name) === full || (r.googleName && norm(a.name) === norm(r.googleName)));
+  if (exact.length === 1) return exact[0].id;
+  const first = norm(r.firstName);
+  const byFirst = adults.filter((a) => norm(a.name) === first || norm(a.name).split(' ')[0] === first);
+  return byFirst.length === 1 ? byFirst[0].id : null;
+}
+
+/**
+ * People who signed in with Google, weren't on the list, and asked to be added.
+ * "Link" gives someone already on the list this account (replacing their email): it works during the game too.
+ * "Add as new person" puts them in the list editor (before the draw only).
+ */
+function requestsCard(requests: AccessRequest[], started: boolean, adults: ListAdult[]): string {
   if (!requests.length) return '';
+  const sorted = [...adults].sort((a, b) => a.name.localeCompare(b.name));
   return `<section class="card">
     <h2>🙋 Access requests <span class="pill">${requests.length}</span></h2>
-    <p class="muted">${
-      started
-        ? 'The draw has started, so the list is locked. To add someone, restart with Redraw (Danger zone), then add them.'
-        : '<b>Add to the list</b> puts them under Singles in the list below (move them to a family if needed). <b>Save the list</b> to finish: the request then disappears.'
-    }</p>
+    <p class="muted"><b>Link</b> them to their name on the list: the email there is replaced, and they can sign in straight away.
+      ${
+        started
+          ? 'New people can\'t be added while the draw is running (restart with Redraw first).'
+          : '<b>Add as new person</b> puts them under Singles in the list below; <b>Save the list</b> to finish.'
+      }</p>
     <ul class="people">${requests
-      .map(
-        (r) => `<li class="req"><span class="who">${esc(r.firstName)} ${esc(r.lastName)}
-          <small>${esc(r.email)}${r.googleEmail !== r.email ? ` · signed in as ${esc(r.googleEmail)}` : ''}${r.googleName ? ` · Google name: ${esc(r.googleName)}` : ''} · ${esc(fmtTime(r.sentAt))}</small></span>
+      .map((r) => {
+        const guess = guessPerson(r, sorted);
+        const two = r.googleEmail !== r.email;
+        return `<li class="req"><span class="who">${esc(`${r.firstName} ${r.lastName}`.trim())}
+          <small>${esc(r.email)}${two ? ` · signed in as ${esc(r.googleEmail)}` : ''}${r.googleName ? ` · Google name: ${esc(r.googleName)}` : ''} · ${esc(fmtTime(r.sentAt))}</small></span>
+          <div class="req-link">
+            <select data-req-person="${r.id}" aria-label="Who is ${esc(r.firstName)} on the list?">
+              <option value="">Who is this on the list?</option>
+              ${sorted
+                .map(
+                  (a) =>
+                    `<option value="${a.id}" ${a.id === guess ? 'selected' : ''}>${esc(a.name)} · ${a.email ? esc(a.email) : 'no email'}</option>`,
+                )
+                .join('')}
+            </select>
+            ${
+              two
+                ? `<select data-req-email="${r.id}" aria-label="Which email to link">
+                    <option value="${esc(r.googleEmail)}">Link ${esc(r.googleEmail)} (signed in with it)</option>
+                    <option value="${esc(r.email)}">Link ${esc(r.email)} (from the form)</option>
+                  </select>`
+                : ''
+            }
+          </div>
           <span class="req-actions">
-            ${started ? '' : `<button class="btn small green" data-req-add="${r.id}">Add to the list</button>`}
+            <button class="btn small green" data-req-link="${r.id}">Link 🔗</button>
+            ${started ? '' : `<button class="btn small ghost" data-req-add="${r.id}">Add as new person</button>`}
             <button class="btn small ghost" data-req-dismiss="${r.id}">Dismiss</button>
-          </span></li>`,
-      )
+          </span></li>`;
+      })
       .join('')}</ul>
     <p class="error" id="req-err" hidden></p>
   </section>`;

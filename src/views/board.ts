@@ -6,6 +6,7 @@ const EVENT_TEXT: Record<string, (a: string, d: string) => string> = {
   revealed: (a, d) => `🎁 ${a} found their Secret Santa${d ? ` (${d})` : ''}`,
   google_claimed: (a, d) => `🔗 ${a} linked a Google account (${d})`,
   claim_unlocked: (a, d) => `🔓 The admin unlinked ${a}'s Google account (${d})`,
+  admin_linked: (a, d) => `🔗 The admin linked ${a} to a Google account (${d})`,
   unseal_requested: () => '🚨 The admin asked to unseal all Secret Santas',
   unseal_approved: (a) => `✋ ${a} approved the unseal`,
   unsealed: () => '👁 The admin viewed all Secret Santas',
