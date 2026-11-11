@@ -89,11 +89,11 @@ app.use('*', async (c, next) => {
   if (!identity) return c.json({ error: 'Please sign in again.' }, 401);
 
   // The verified Google email is the only key. It is on the list either because the admin typed it in,
-  // or because this person linked it once by name (see /google/claim).
+  // or because this person linked it once by name (see /google/match).
   const participant = await c.env.DB.prepare('SELECT * FROM participants WHERE google_email = ?')
     .bind(identity.email)
     .first<Participant>();
-  // First sign-in with this email: from now on it can't be replaced by name any more (see /google/claim).
+  // First sign-in with this email: from now on it can't be replaced by name any more (see /google/match).
   if (participant && !participant.google_seen_at) {
     participant.google_seen_at = now();
     await c.env.DB.prepare('UPDATE participants SET google_seen_at = ? WHERE id = ? AND google_seen_at IS NULL')
@@ -116,19 +116,44 @@ async function adults(db: D1Database) {
 /** An email the admin typed into the list is only a hint until it is used: until then, a name fit may replace it. */
 const typedNeverUsed = (p: Adult) => !!p.google_email && !p.google_claimed_at && !p.google_seen_at;
 
-/** What the claim screen shows: one person to confirm, or why Santa can't find you. */
+/**
+ * Not linked yet: find this Google account on the list by its name. When exactly one person fits, the account
+ * is linked to them straight away, with no "Are you …?" question (names on the list are unique). Otherwise the
+ * claim screen says why Santa can't find them.
+ */
 app.post('/google/match', async (c) => {
   const { identity, participant } = c.get('who');
   if (participant) return c.json({ claimed: true });
-  const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB), typedNeverUsed);
+  const db = c.env.DB;
+  let m = matchSignIn(identity.email, identity.name, await adults(db), typedNeverUsed);
+  if (m.kind === 'name') {
+    // Link only if still unclaimed, or the typed email is still unused (atomic): first come, first served.
+    const at = now();
+    const res = await db
+      .prepare(
+        `UPDATE participants SET google_email = ?, google_claimed_at = ?, google_seen_at = ?
+         WHERE id = ? AND (google_email IS NULL OR (google_claimed_at IS NULL AND google_seen_at IS NULL))`,
+      )
+      .bind(identity.email, at, at, m.p.id)
+      .run();
+    if (res.meta.changes) {
+      await logEvent(
+        db,
+        'google_claimed',
+        m.p.name,
+        `${maskEmail(identity.email)}${m.replacesEmail ? ', replacing the email on the list' : ''}`,
+      );
+      return c.json({ claimed: true });
+    }
+    m = { kind: 'taken', p: m.p }; // someone else linked them a moment ago
+  }
   return c.json({
     claimed: false,
     googleName: identity.name,
     email: identity.email,
     result: m.kind,
-    candidate: m.kind === 'name' || m.kind === 'taken' ? { id: m.p.id, name: m.p.name } : null,
-    replacesEmail: m.kind === 'name' && m.replacesEmail,
-    request: await myAccessRequest(c.env.DB, identity.email),
+    candidate: m.kind === 'taken' ? { id: m.p.id, name: m.p.name } : null,
+    request: await myAccessRequest(db, identity.email),
   });
 });
 
@@ -176,35 +201,6 @@ app.post('/access-request', async (c) => {
     .bind(firstName, '', email, identity.email, identity.name || null)
     .run();
   return c.json({ ok: true, request: await myAccessRequest(db, identity.email) });
-});
-
-app.post('/google/claim', async (c) => {
-  const { identity, participant } = c.get('who');
-  if (participant) return c.json({ ok: true });
-  const { id } = await c.req.json<{ id?: number }>().catch(() => ({ id: undefined }));
-  // Decided again on the server: only a single name fit that is unlinked (or has an unused typed email) can be claimed.
-  const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB), typedNeverUsed);
-  if (m.kind === 'taken')
-    return c.json({ error: `${m.p.name} is already linked to another Google account. Please ask one of the admins.` }, 409);
-  if (m.kind !== 'name' || m.p.id !== Number(id))
-    return c.json({ error: `🎅 Santa couldn't find you on the Berlin Mallu list. Please ask one of the admins to add you.` }, 403);
-  // Lock only if still unclaimed, or the typed email is still unused (atomic): first come, first served.
-  const at = now();
-  const res = await c.env.DB.prepare(
-    `UPDATE participants SET google_email = ?, google_claimed_at = ?, google_seen_at = ?
-     WHERE id = ? AND (google_email IS NULL OR (google_claimed_at IS NULL AND google_seen_at IS NULL))`,
-  )
-    .bind(identity.email, at, at, m.p.id)
-    .run();
-  if (!res.meta.changes)
-    return c.json({ error: `${m.p.name} is already linked to another Google account. Please ask one of the admins.` }, 409);
-  await logEvent(
-    c.env.DB,
-    'google_claimed',
-    m.p.name,
-    `${maskEmail(identity.email)}${m.replacesEmail ? ', replacing the email on the list' : ''}`,
-  );
-  return c.json({ ok: true });
 });
 
 // ---------- Participant ----------

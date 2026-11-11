@@ -7,16 +7,15 @@ type SignInCheck = {
   googleName?: string;
   /** The signed-in Google email, to fill in the request form. */
   email?: string;
-  result?: 'name' | 'taken' | 'ambiguous' | 'none';
+  /** Why Santa can't find them. (A single name fit is linked on the server straight away: claimed.) */
+  result?: 'taken' | 'ambiguous' | 'none';
   candidate?: { id: number; name: string } | null;
-  /** The candidate has an email on the list that was never used: confirming replaces it with this account. */
-  replacesEmail?: boolean;
   /** This Google account's "Request access" waiting for the admin, if any. */
   request?: AccessRequest | null;
 };
 type AccessRequest = { firstName: string; email: string; sentAt: string };
 
-/** Shown when this Google email isn't on the list yet: confirm who you are once, or Santa can't find you. */
+/** Shown when this Google account isn't on the list and its name doesn't fit exactly one person. */
 export async function claimView() {
   spinner();
   const data = await api<SignInCheck>('/google/match', { method: 'POST', body: {} });
@@ -37,43 +36,22 @@ export async function claimView() {
       <button class="btn green" id="request">${request ? 'Update my request ✏️' : 'Request access 🙋'}</button>
     </div>`;
 
-  const buttons = (yes: boolean) => `
-    <p class="error" id="err" hidden></p>
-    <div class="stack" style="margin-top:12px">
-      ${yes && c ? `<button class="btn green" id="yes">Yes, I'm ${esc(c.name)}</button><button class="btn ghost" id="no">No, that's not me</button>` : ''}
-      ${yes ? '' : '<button class="btn ghost" id="other">Try another Google account</button>'}
-    </div>`;
-
-  const show = (body: string, yes: boolean) => {
+  const show = (body: string) => {
     render(`
       ${logo()}
-      <section class="card festive ${yes ? '' : 'center'}">
+      <section class="card festive center">
         ${body}
-        ${buttons(yes)}
+        <div class="stack" style="margin-top:12px">
+          <button class="btn ghost" id="other">Try another Google account</button>
+        </div>
       </section>
       ${footer()}
     `);
-    if (!yes) {
-      $('#other').addEventListener('click', async () => {
-        await signOut();
-        go('#/verify');
-      });
-      $('#request').addEventListener('click', () => requestForm(body));
-      return;
-    }
-    $<HTMLButtonElement>('#yes').addEventListener('click', async (e) => {
-      const b = e.currentTarget as HTMLButtonElement;
-      try {
-        b.disabled = true;
-        await api('/google/claim', { body: { id: c!.id } });
-        redirect('#/home');
-      } catch (err) {
-        b.disabled = false;
-        showError('#err', err);
-      }
+    $('#other').addEventListener('click', async () => {
+      await signOut();
+      go('#/verify');
     });
-    // "No" doesn't sign out: it says who to ask, and offers another Google account.
-    $('#no').addEventListener('click', () => show(notFound(`You signed in with Google as ${who}.`), false));
+    $('#request').addEventListener('click', () => requestForm(body));
   };
 
   /** First name and email. The admin sees the request in the admin panel. */
@@ -95,7 +73,7 @@ export async function claimView() {
       </section>
       ${footer()}
     `);
-    $('#rq-cancel').addEventListener('click', () => show(back, false));
+    $('#rq-cancel').addEventListener('click', () => show(back));
     $('#req-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       $('#rq-err').hidden = true;
@@ -129,16 +107,6 @@ export async function claimView() {
     });
   };
 
-  if (data.result === 'name' && c) {
-    show(
-      `<h2>Are you ${esc(c.name)}? 🎅</h2>
-       <p class="muted">You signed in with Google as ${who}. Confirming links this Google account to ${esc(c.name)} for good${
-         data.replacesEmail ? ', instead of the email on the list' : ''
-       }.</p>`,
-      true,
-    );
-    return;
-  }
   show(
     notFound(
       `You signed in with Google as ${who}. ${
@@ -149,6 +117,5 @@ export async function claimView() {
             : "Your Google email and name don't match anyone on the list."
       }`,
     ),
-    false,
   );
 }
