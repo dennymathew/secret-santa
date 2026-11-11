@@ -39,6 +39,13 @@ export function logo(sub = '') {
   </header>`;
 }
 
+/** The blue bar at the top of every admin page, so the admin side is never mistaken for a participant page. */
+export const adminBar = (email = '') =>
+  `<header class="admin-bar" role="banner">
+    <span><b>🛠 ADMIN</b> · Berlin Mallu Santa</span>
+    ${email ? `<span class="admin-who">${esc(email)} · <button class="link" data-signout>Sign out</button></span>` : ''}
+  </header>`;
+
 /** The Sign out link. Every signed-in page shows it at the bottom; main.ts handles the click. */
 export const signOutLink = () => '<button class="link" data-signout>Sign out</button>';
 

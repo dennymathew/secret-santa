@@ -151,7 +151,8 @@ textarea { min-height: 200px; font-family: ui-monospace, Menlo, monospace; font-
 #confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }
 
 /* ---------- Board ---------- */
-.people { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+/* minmax(0, 1fr): without it the column grows to the longest unbroken line (e.g. a full email) and rows spill out of the card. */
+.people { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .people li {
   display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: #fff;
   border: 2px solid #f0e6d6;
@@ -161,8 +162,10 @@ textarea { min-height: 200px; font-family: ui-monospace, Menlo, monospace; font-
 .people .status { font-size: 22px; }
 .people .who { flex: 1; min-width: 0; }
 .people li.req { flex-wrap: wrap; }
-.people li.req .who small { white-space: normal; }
-.people li.req .req-link { flex-basis: 100%; display: grid; gap: 6px; }
+.people li.req .who small, .people li.wrap .who small { white-space: normal; overflow-wrap: anywhere; }
+.people li.req .req-link { flex-basis: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+/* A select is as wide as its longest option (name + email) unless told otherwise. */
+.people li.req .req-link select { width: 100%; min-width: 0; text-overflow: ellipsis; }
 .people .req-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .people .who small { display: block; color: var(--muted); font-size: .78em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress { height: 14px; border-radius: 999px; background: #eadfce; overflow: hidden; }
@@ -267,15 +270,7 @@ details.raw td small.bad { color: var(--red); }
 details.raw td small.warn { color: #8a6200; }
 .paste-list { margin-top: 8px; }
 
-/* ---------- Admin side: plain and dark, so it's never mistaken for a participant page ---------- */
-body.admin-mode { background: #1b1f27; }
-body.admin-mode #snow, body.admin-mode .lights, body.admin-mode .scenery { display: none; }
-body.admin-mode .card {
-  background: #f4f5f7; border-radius: 12px; border-top: 4px solid #3b82f6;
-  box-shadow: 0 4px 14px rgba(0,0,0,.35);
-}
-body.admin-mode .card.danger { border: 2px solid var(--red); border-top-width: 4px; }
-body.admin-mode .footer-links { color: #aeb6c4; }
+/* ---------- Admin side: the same look as the participant pages, plus a blue admin bar at the top ---------- */
 .admin-bar {
   position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 4px 12px;
   justify-content: space-between; align-items: center;
@@ -284,5 +279,3 @@ body.admin-mode .footer-links { color: #aeb6c4; }
 }
 .admin-bar .link { color: #fff; padding: 0; }
 .admin-bar .admin-who { overflow-wrap: anywhere; }
-.admin-title { font-size: 1.5em; margin: 0 0 4px; }
-.admin-login { margin-top: 12vh; }
