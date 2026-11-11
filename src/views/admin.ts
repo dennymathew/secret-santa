@@ -1,4 +1,4 @@
-import { render, esc, on, go, $, busy, showError, spinner, footer, fmtTime, app } from '../ui';
+import { render, esc, on, go, $, busy, showError, spinner, footer, fmtTime, app, adminBar, logo } from '../ui';
 import { api, ApiError, type Board } from '../api';
 import { unsealPanel, eventsHtml } from './board';
 import { mountListEditor, draftFromSaved, draftRows, draftText } from './listEditor';
@@ -23,11 +23,9 @@ export async function adminView() {
   const done = board.participants.filter((p) => p.revealed).length;
 
   render(`
-    <header class="admin-bar" role="banner">
-      <span><b>🛠 ADMIN</b> · Berlin Mallu Santa</span>
-      <span class="admin-who">${esc(email)} · <button class="link" data-signout>Sign out</button></span>
-    </header>
-    <section class="card">
+    ${adminBar(email)}
+    ${logo('Admin panel 🛠')}
+    <section class="card festive">
       <h2>Game status <span class="pill ${board.game.status}">${started ? 'Started' : 'Draft'}</span></h2>
       <p>${board.participants.filter((p) => !p.isKid).length} adults · ${board.participants.filter((p) => p.isKid).length} kids · ${done} envelopes opened</p>
       <label for="share">Link to share in WhatsApp</label>
@@ -305,7 +303,7 @@ function emailsCard(people: SavedPerson[], board: Board): string {
     <p class="muted">Everyone's email, in full (only you see this). If someone linked the wrong person, unlink it. Everyone will see this in the log.</p>
     <ul class="people">${adults
       .map(
-        (p) => `<li><span class="who">${esc(p.name)}<small>${
+        (p) => `<li class="wrap"><span class="who">${esc(p.name)}<small>${
           p.email
             ? `${esc(p.email)} · ${p.claimed_at ? 'linked by Google name' : 'on the list'}`
             : 'no email yet: signs in by Google name'

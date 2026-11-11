@@ -1,15 +1,17 @@
 // The separate admin sign-in: Google only, and only for emails on the admin list (scripts/admins.sh).
 // It gives an admin session, never a participant sign-in.
-import { render, on, $, busy, esc } from '../ui';
+import { render, on, $, busy, esc, adminBar, logo } from '../ui';
 import { googleSignIn, takeAdminError, DEV_MODE, TEST_SITE } from '../auth';
 import { GOOGLE_ICON } from './verify';
 
 export async function adminLoginView() {
   const error = takeAdminError();
   render(`
-    <section class="card admin-card admin-login">
-      <h1 class="admin-title">🛠 Admin sign-in</h1>
-      <p class="muted">Berlin Mallu Santa · for admins only</p>
+    ${adminBar()}
+    ${logo()}
+    <section class="card festive">
+      <h2>🛠 Admin sign-in</h2>
+      <p class="muted">For admins only.</p>
       ${DEV_MODE ? `<p class="notice">${TEST_SITE ? '🧪 Test site' : '🛠 Dev mode'}: no real Google. Type an admin's email.</p>` : ''}
       ${error ? `<p class="error">${esc(error)}</p>` : ''}
       <div class="stack" style="margin-top:12px">

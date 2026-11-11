@@ -34,8 +34,7 @@ async function route() {
   const name = location.hash.replace(/^#\/?/, '').split('?')[0];
   const r = routes[name] ?? routes[''];
   const adminSide = ADMIN_PAGES.has(name);
-  // Admin pages look different (dark, plain, with an admin bar), so the two sides are easy to tell apart.
-  document.body.classList.toggle('admin-mode', adminSide);
+  // Admin pages carry a blue admin bar and "Admin" in the tab title, so the two sides are easy to tell apart.
   document.title = `${TEST_SITE ? '🧪 TEST · ' : ''}${adminSide ? '🛠 Admin · ' : ''}${BASE_TITLE}`;
   try {
     if (isAdminSignedIn()) {
