@@ -266,3 +266,23 @@ details.raw td small.mail { color: var(--green-dark); }
 details.raw td small.bad { color: var(--red); }
 details.raw td small.warn { color: #8a6200; }
 .paste-list { margin-top: 8px; }
+
+/* ---------- Admin side: plain and dark, so it's never mistaken for a participant page ---------- */
+body.admin-mode { background: #1b1f27; }
+body.admin-mode #snow, body.admin-mode .lights, body.admin-mode .scenery { display: none; }
+body.admin-mode .card {
+  background: #f4f5f7; border-radius: 12px; border-top: 4px solid #3b82f6;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+body.admin-mode .card.danger { border: 2px solid var(--red); border-top-width: 4px; }
+body.admin-mode .footer-links { color: #aeb6c4; }
+.admin-bar {
+  position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 4px 12px;
+  justify-content: space-between; align-items: center;
+  margin: 0 -4px; padding: 10px 14px; border-radius: 10px;
+  background: #3b82f6; color: #fff; font-size: .9em; box-shadow: 0 4px 14px rgba(0,0,0,.35);
+}
+.admin-bar .link { color: #fff; padding: 0; }
+.admin-bar .admin-who { overflow-wrap: anywhere; }
+.admin-title { font-size: 1.5em; margin: 0 0 4px; }
+.admin-login { margin-top: 12vh; }

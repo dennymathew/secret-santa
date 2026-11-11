@@ -1,23 +1,22 @@
-import { Hono, type Context } from 'hono';
+import { Hono } from 'hono';
 import { handle } from 'hono/cloudflare-pages';
 import type { Env, Identity, Participant } from '../lib/types';
 import { verifyIdentity, isTestMode } from '../lib/auth';
 import { drawPoolsSafe, DrawError, type Relaxation } from '../lib/draw';
 import { getKey, seal, unseal } from '../lib/crypto';
 import { matchSignIn, maskEmail, isEmail, listFromEnv } from '../lib/nameMatch';
-import { identityKey, signSession, verifySession, verifyPassword } from '../lib/adminAuth';
+import { identityKey, signAdminSession, verifyAdminSession } from '../lib/adminAuth';
 
+/** A participant-side request: signed in with Google (Firebase ID token). */
 type Who = {
   identity: Identity;
   /** "google:email" */
   idKey: string;
   participant: Participant | null;
-  /** On ADMIN_EMAILS: may sign in even when not on the list (needed to paste the first list). */
-  organizer: boolean;
-  /** Has a valid admin session (unlocked with the admin password). */
-  isAdmin: boolean;
 };
-type App = { Bindings: Env; Variables: { who: Who } };
+/** An admin-side request: a valid admin session (see /admin/login) for an email on the admin list. */
+type AdminWho = { email: string };
+type App = { Bindings: Env; Variables: { who: Who; admin: AdminWho } };
 
 const app = new Hono<App>().basePath('/api');
 
@@ -53,8 +52,38 @@ app.use('*', async (c, next) => {
 // The frontend asks this on load: on the test site it skips Firebase and uses a fake Google sign-in.
 app.get('/config', (c) => c.json({ testMode: isTestMode(c.env) }));
 
+// ---------- Admins ----------
+/** Is this email on the admin list (the admins table, managed with scripts/admins.sh)? */
+async function isAdminEmail(db: D1Database, email: string): Promise<boolean> {
+  return !!(await db.prepare('SELECT 1 FROM admins WHERE email = ?').bind(email.toLowerCase()).first());
+}
+
+/** Is, or ever was, an admin. Such people never count towards an unseal quorum. */
+async function isOrWasAdmin(db: D1Database, email: string): Promise<boolean> {
+  return !!(await db
+    .prepare(
+      `SELECT 1 FROM admins WHERE email = ?1
+       UNION ALL SELECT 1 FROM admin_logins WHERE ok = 1 AND identity = 'google:' || ?1 LIMIT 1`,
+    )
+    .bind(email.toLowerCase())
+    .first());
+}
+
 // ---------- Authentication ----------
+// Two separate sign-ins. Admin routes (/api/admin/*, except /login) take ONLY an admin session, in the
+// X-Admin-Session header. Everything else takes ONLY a participant's Google sign-in. So an admin session
+// can never open an envelope, and a participant sign-in can never reach the admin panel.
 app.use('*', async (c, next) => {
+  const path = c.req.path;
+  if (path.startsWith('/api/admin/') && path !== '/api/admin/login') {
+    const email = await verifyAdminSession(c.req.header('X-Admin-Session'), c.env.MATCH_KEY);
+    // Checked on every request, so removing someone from the admin list takes effect at once.
+    if (!email || !(await isAdminEmail(c.env.DB, email)))
+      return c.json({ error: 'Please sign in as admin again.', adminLocked: true }, 401);
+    c.set('admin', { email });
+    return next();
+  }
+
   const token = (c.req.header('Authorization') ?? '').replace(/^Bearer\s+/i, '');
   const identity = await verifyIdentity(token, c.env, new URL(c.req.url).host);
   if (!identity) return c.json({ error: 'Please sign in again.' }, 401);
@@ -71,25 +100,9 @@ app.use('*', async (c, next) => {
       .bind(participant.google_seen_at, participant.id)
       .run();
   }
-  const organizer = listFromEnv(c.env.ADMIN_EMAILS).includes(identity.email);
-  const idKey = identityKey(identity);
-  // Admin = a valid session from POST /admin/login, for this exact person and the current password.
-  const isAdmin =
-    (!!participant || organizer) &&
-    (await verifySession(c.req.header('X-Admin-Session'), c.env.MATCH_KEY, c.env.ADMIN_PASSWORD_HASH, idKey));
-  c.set('who', { identity, idKey, participant, organizer, isAdmin });
+  c.set('who', { identity, idKey: identityKey(identity), participant });
   await next();
 });
-
-/** Has this participant ever unlocked the admin panel? */
-async function everUnlockedAdmin(db: D1Database, p: Participant | null, idKey: string): Promise<boolean> {
-  const keys = [idKey, p?.google_email ? `google:${p.google_email}` : ''];
-  const row = await db
-    .prepare('SELECT 1 FROM admin_logins WHERE ok = 1 AND identity IN (?, ?) LIMIT 1')
-    .bind(...keys)
-    .first();
-  return !!row;
-}
 
 // ---------- Not linked yet: find yourself by name ----------
 type Adult = { id: number; name: string; google_email: string | null; google_claimed_at: string | null; google_seen_at: string | null };
@@ -102,19 +115,16 @@ async function adults(db: D1Database) {
 
 /** An email the admin typed into the list is only a hint until it is used: until then, a name fit may replace it. */
 const typedNeverUsed = (p: Adult) => !!p.google_email && !p.google_claimed_at && !p.google_seen_at;
-const organizerName = (env: Env) => env.ORGANIZER_NAME?.trim() || 'the admin';
 
 /** What the claim screen shows: one person to confirm, or why Santa can't find you. */
 app.post('/google/match', async (c) => {
-  const { identity, participant, organizer } = c.get('who');
+  const { identity, participant } = c.get('who');
   if (participant) return c.json({ claimed: true });
   const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB), typedNeverUsed);
   return c.json({
     claimed: false,
     googleName: identity.name,
     email: identity.email,
-    organizer,
-    organizerName: organizerName(c.env),
     result: m.kind,
     candidate: m.kind === 'name' || m.kind === 'taken' ? { id: m.p.id, name: m.p.name } : null,
     replacesEmail: m.kind === 'name' && m.replacesEmail,
@@ -172,13 +182,12 @@ app.post('/google/claim', async (c) => {
   const { identity, participant } = c.get('who');
   if (participant) return c.json({ ok: true });
   const { id } = await c.req.json<{ id?: number }>().catch(() => ({ id: undefined }));
-  const ask = organizerName(c.env);
   // Decided again on the server: only a single name fit that is unlinked (or has an unused typed email) can be claimed.
   const m = matchSignIn(identity.email, identity.name, await adults(c.env.DB), typedNeverUsed);
   if (m.kind === 'taken')
-    return c.json({ error: `${m.p.name} is already linked to another Google account. Please ask ${ask}.` }, 409);
+    return c.json({ error: `${m.p.name} is already linked to another Google account. Please ask one of the admins.` }, 409);
   if (m.kind !== 'name' || m.p.id !== Number(id))
-    return c.json({ error: `🎅 Santa couldn't find you on the Berlin Mallu list. Please ask ${ask} to add you.` }, 403);
+    return c.json({ error: `🎅 Santa couldn't find you on the Berlin Mallu list. Please ask one of the admins to add you.` }, 403);
   // Lock only if still unclaimed, or the typed email is still unused (atomic): first come, first served.
   const at = now();
   const res = await c.env.DB.prepare(
@@ -188,7 +197,7 @@ app.post('/google/claim', async (c) => {
     .bind(identity.email, at, at, m.p.id)
     .run();
   if (!res.meta.changes)
-    return c.json({ error: `${m.p.name} is already linked to another Google account. Please ask ${ask}.` }, 409);
+    return c.json({ error: `${m.p.name} is already linked to another Google account. Please ask one of the admins.` }, 409);
   await logEvent(
     c.env.DB,
     'google_claimed',
@@ -210,15 +219,14 @@ async function kidsOf(db: D1Database, adult: Participant | null) {
 }
 
 app.get('/me', async (c) => {
-  const { identity, idKey, participant, organizer, isAdmin } = c.get('who');
+  const { identity, participant } = c.get('who');
   const game = await gameStatus(c.env.DB);
   const kids = await kidsOf(c.env.DB, participant);
   return c.json({
     kids: kids.map((k) => ({ id: k.id, name: k.name, revealedAt: k.revealed_at })),
     signedInWith: identity.kind,
-    isAdmin,
-    organizer,
-    adminEver: await everUnlockedAdmin(c.env.DB, participant, idKey),
+    /** Is or was an admin: can't approve an unseal. */
+    adminEver: await isOrWasAdmin(c.env.DB, identity.email),
     participant: participant
       ? { id: participant.id, name: participant.name, revealedAt: participant.revealed_at }
       : null,
@@ -245,7 +253,7 @@ app.post('/reveal', async (c) => {
   const row = await c.env.DB.prepare('SELECT ciphertext, iv FROM assignments WHERE giver_id = ?')
     .bind(subject.id)
     .first<{ ciphertext: string; iv: string }>();
-  if (!row) return c.json({ error: 'No envelope found. Ask the admin.' }, 404);
+  if (!row) return c.json({ error: 'No envelope found. Please ask one of the admins.' }, 404);
 
   const key = await getKey(c.env.MATCH_KEY);
   const receiverId = await unseal(key, subject.id, row.ciphertext, row.iv);
@@ -281,11 +289,12 @@ async function unsealState(env: Env) {
   }>();
   if (!req) return null;
   const { results } = await env.DB.prepare(
-    // Approvals from anyone who has ever unlocked the admin panel never count, even if they approved first.
+    // Approvals from anyone who is or ever was an admin never count, even if they approved first.
     `SELECT p.id, p.name, a.approved_at FROM unseal_approvals a JOIN participants p ON p.id = a.participant_id
      WHERE a.request_id = ?
        AND NOT EXISTS (SELECT 1 FROM admin_logins l WHERE l.ok = 1
                        AND l.identity = 'google:' || p.google_email)
+       AND NOT EXISTS (SELECT 1 FROM admins ad WHERE ad.email = p.google_email)
      ORDER BY a.approved_at`,
   )
     .bind(req.id)
@@ -300,18 +309,17 @@ async function unsealState(env: Env) {
   };
 }
 
-app.get('/board', async (c) => {
-  const { participant, organizer, isAdmin } = c.get('who');
-  if (!participant && !organizer && !isAdmin) return c.json({ error: "You're not on the participant list." }, 403);
-  const game = await gameStatus(c.env.DB);
-  const { results: people } = await c.env.DB.prepare(
+/** The status board: the same for everyone, admins included. `me` marks the signed-in participant. */
+async function boardData(env: Env, me: number | null) {
+  const game = await gameStatus(env.DB);
+  const { results: people } = await env.DB.prepare(
     'SELECT id, name, is_kid, revealed_at, google_email FROM participants ORDER BY name COLLATE NOCASE',
   ).all<{ id: number; name: string; is_kid: number; revealed_at: string | null; google_email: string | null }>();
-  const { results: events } = await c.env.DB.prepare(
+  const { results: events } = await env.DB.prepare(
     'SELECT ts, type, actor_name, detail FROM events ORDER BY id DESC LIMIT 100',
   ).all();
-  return c.json({
-    game: { status: game.status, startedAt: game.started_at, endsAt: endsAt(c.env) },
+  return {
+    game: { status: game.status, startedAt: game.started_at, endsAt: endsAt(env) },
     participants: people.map((p) => ({
       id: p.id,
       name: p.name,
@@ -321,16 +329,22 @@ app.get('/board', async (c) => {
       google: maskEmail(p.google_email),
     })),
     events,
-    unseal: await unsealState(c.env),
-    me: participant?.id ?? null,
-  });
+    unseal: await unsealState(env),
+    me,
+  };
+}
+
+app.get('/board', async (c) => {
+  const { participant } = c.get('who');
+  if (!participant) return c.json({ error: "You're not on the participant list." }, 403);
+  return c.json(await boardData(c.env, participant.id));
 });
 
 app.post('/unseal/approve', async (c) => {
-  const { participant, isAdmin, idKey } = c.get('who');
+  const { participant, identity } = c.get('who');
   if (!participant) return c.json({ error: "You're not on the participant list." }, 403);
-  if (isAdmin || (await everUnlockedAdmin(c.env.DB, participant, idKey)))
-    return c.json({ error: "Anyone who has unlocked the admin panel can't approve an unseal request." }, 403);
+  if (await isOrWasAdmin(c.env.DB, identity.email))
+    return c.json({ error: "Admins can't approve an unseal request." }, 403);
   const state = await unsealState(c.env);
   if (!state || state.unsealedAt) return c.json({ error: 'There is no open unseal request.' }, 409);
   const res = await c.env.DB.prepare(
@@ -345,83 +359,45 @@ app.post('/unseal/approve', async (c) => {
 // ---------- Admin ----------
 const admin = new Hono<App>();
 
-// Every admin route except /login needs a valid admin session. This is the real lock:
-// the password form in the browser is only a convenience.
-admin.use('*', async (c, next) => {
-  if (c.req.path === '/api/admin/login') return next();
-  if (!c.get('who').isAdmin)
-    return c.json({ error: 'The admin panel is locked. Enter the admin password.', adminLocked: true }, 403);
-  await next();
-});
-
-const actorName = (who: Who) => who.participant?.name ?? 'The organizer';
-
-// admin_logins.ok: 1 = correct, 0 = wrong (or still being checked), -1 = refused by the limit (not a guess).
-const TRIES_PER_15_MIN = 5;
-const TRIES_PER_DAY = 20;
-
-/**
- * Checks the admin password with a per-person brute-force limit: 5 wrong tries per 15 minutes and
- * 20 per day. There is no shared limit, so nobody can lock the real admin out by guessing wrong.
- * Every try is recorded BEFORE the password is checked, so tries sent in parallel all count.
- * Returns an error response, or null if the password is correct.
- */
-async function checkPassword(c: Context<App>, password: unknown) {
-  const db = c.env.DB;
-  const who = c.get('who');
-  if (!c.env.ADMIN_PASSWORD_HASH)
-    return c.json({ error: "The admin password hasn't been set up yet (see the README: set-admin-password.sh)." }, 503);
-  // Claim this try first (as wrong), then count: the n-th parallel try always sees at least n.
-  const attempt = await db.prepare('INSERT INTO admin_logins (identity, ok) VALUES (?, 0)').bind(who.idKey).run();
-  const attemptId = attempt.meta.last_row_id;
-  const counts = await db
-    .prepare(
-      `SELECT SUM(CASE WHEN ts > datetime('now', '-15 minutes') THEN 1 ELSE 0 END) AS recent, COUNT(*) AS today
-       FROM admin_logins WHERE ok = 0 AND identity = ? AND ts > datetime('now', '-1 day')`,
-    )
-    .bind(who.idKey)
-    .first<{ recent: number; today: number }>();
-  if ((counts?.recent ?? 0) > TRIES_PER_15_MIN || (counts?.today ?? 0) > TRIES_PER_DAY) {
-    await db.prepare('UPDATE admin_logins SET ok = -1 WHERE id = ?').bind(attemptId).run();
-    return c.json(
-      {
-        error:
-          (counts?.today ?? 0) > TRIES_PER_DAY
-            ? 'Too many wrong passwords today. Please try again tomorrow.'
-            : 'Too many wrong passwords. Please wait 15 minutes and try again.',
-      },
-      429,
-    );
-  }
-  const ok = typeof password === 'string' && (await verifyPassword(password, c.env.ADMIN_PASSWORD_HASH));
-  if (!ok) {
-    await logEvent(db, 'admin_login_failed', actorName(who));
-    return c.json({ error: "That password isn't right." }, 403);
-  }
-  await db.prepare('UPDATE admin_logins SET ok = 1 WHERE id = ?').bind(attemptId).run();
-  return null;
+/** Name for the public log: the admin's name if they're on the list, else "An admin". */
+async function adminActor(db: D1Database, email: string): Promise<string> {
+  const p = await db.prepare('SELECT name FROM participants WHERE google_email = ?').bind(email).first<{ name: string }>();
+  return p?.name ?? 'An admin';
 }
 
+/**
+ * Admin sign-in: a Google sign-in (Authorization header, like a participant's) from the admin sign-in page.
+ * Only emails on the admin list get an admin session; being on the participant list doesn't matter.
+ */
 admin.post('/login', async (c) => {
-  const who = c.get('who');
-  if (!who.participant && !who.organizer)
-    return c.json({ error: 'Only people on the list can unlock the admin panel.' }, 403);
-  const { password } = await c.req.json<{ password?: string }>().catch(() => ({ password: undefined }));
-  const fail = await checkPassword(c, password);
-  if (fail) return fail;
-  await logEvent(c.env.DB, 'admin_unlocked', actorName(who));
-  return c.json(await signSession(c.env.MATCH_KEY, c.env.ADMIN_PASSWORD_HASH!, who.idKey));
+  const { identity } = c.get('who');
+  const db = c.env.DB;
+  // One-time move from the old ADMIN_EMAILS secret: those emails become admins at their first admin sign-in.
+  if (listFromEnv(c.env.ADMIN_EMAILS).includes(identity.email))
+    await db.prepare('INSERT OR IGNORE INTO admins (email) VALUES (?)').bind(identity.email).run();
+  if (!(await isAdminEmail(db, identity.email)))
+    return c.json({ error: `${identity.email} isn't an admin. Sign in with an admin's Google account, or use the normal sign-in.` }, 403);
+  // Recorded so that admins never count towards an unseal quorum (see unsealState).
+  await db.prepare('INSERT INTO admin_logins (identity, ok) VALUES (?, 1)').bind(identityKey(identity)).run();
+  await logEvent(db, 'admin_unlocked', await adminActor(db, identity.email));
+  return c.json(await signAdminSession(c.env.MATCH_KEY, identity.email));
 });
 
-// Restart: "redraw" keeps the list, "wipe" deletes everything. Needs the password typed again.
+/** Who is signed in to the admin panel. */
+admin.get('/me', (c) => c.json({ email: c.get('admin').email }));
+
+/** The status board, for the admin panel (the same data everyone sees). */
+admin.get('/board', async (c) => c.json(await boardData(c.env, null)));
+
+// Restart: "redraw" keeps the list, "wipe" deletes everything (except the admin list). Needs "RESET" typed.
 admin.post('/reset', async (c) => {
-  const { mode, password } = await c.req
-    .json<{ mode?: string; password?: string }>()
-    .catch(() => ({ mode: undefined, password: undefined }));
+  const { mode, confirm } = await c.req
+    .json<{ mode?: string; confirm?: string }>()
+    .catch(() => ({ mode: undefined, confirm: undefined }));
   if (mode !== 'redraw' && mode !== 'wipe') return c.json({ error: 'Choose redraw or wipe.' }, 400);
-  const fail = await checkPassword(c, password);
-  if (fail) return fail;
+  if (confirm !== 'RESET') return c.json({ error: 'Type RESET to confirm.' }, 400);
   const db = c.env.DB;
+  const actor = await adminActor(db, c.get('admin').email);
   await db.batch([
     db.prepare('DELETE FROM unseal_approvals'),
     db.prepare('DELETE FROM unseal_requests'),
@@ -432,7 +408,7 @@ admin.post('/reset', async (c) => {
       ? [db.prepare('DELETE FROM exclusions'), db.prepare('DELETE FROM participants'), db.prepare('DELETE FROM access_requests')]
       : [db.prepare('UPDATE participants SET revealed_at = NULL')]),
   ]);
-  await logEvent(db, 'game_reset', actorName(c.get('who')), mode === 'wipe' ? 'everything wiped' : 'list kept, new draw needed');
+  await logEvent(db, 'game_reset', actor, mode === 'wipe' ? 'everything wiped' : 'list kept, new draw needed');
   return c.json({ ok: true });
 });
 

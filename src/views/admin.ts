@@ -1,32 +1,34 @@
-import { logo, render, esc, go, on, $, busy, showError, spinner, footer, fmtTime, app } from '../ui';
-import { api, ApiError, type Board, type Me } from '../api';
-import { ADMIN_KEY } from '../auth';
-import { unsealPanel } from './board';
+import { render, esc, on, go, $, busy, showError, spinner, footer, fmtTime, app } from '../ui';
+import { api, ApiError, type Board } from '../api';
+import { unsealPanel, eventsHtml } from './board';
 import { mountListEditor, draftFromSaved, draftRows, draftText } from './listEditor';
 
 export async function adminView() {
   spinner();
-  const me = await api<Me>('/me');
-  if (!me.isAdmin) return lockScreen(me);
-  const [list, board, { requests }] = await Promise.all([
+  // Admin session only (see the admin sign-in): no participant data, no envelopes.
+  const [{ email }, list, board, { requests }] = await Promise.all([
+    api<{ email: string }>('/admin/me'),
     api<{ participants: SavedPerson[]; exclusions: Array<{ a: string; b: string }> }>('/admin/participants'),
-    api<Board>('/board'),
+    api<Board>('/admin/board'),
     api<{ requests: AccessRequest[] }>('/admin/access-requests'),
   ]);
-  const draft = me.game.status !== 'started';
+  const draft = board.game.status !== 'started';
   const check =
     draft && list.participants.length
       ? await api<{ ok: boolean; relaxed: string[]; error?: string }>('/admin/draw-check').catch(() => null)
       : null;
-  const started = me.game.status === 'started';
+  const started = board.game.status === 'started';
   const shareUrl = location.origin + '/';
   const waText = encodeURIComponent(`🎅 Ho ho ho, Berlin Mallus! Secret Santa is live. Open the link, sign in with Google and find out who you're gifting 🎁\n${shareUrl}`);
   const done = board.participants.filter((p) => p.revealed).length;
 
   render(`
-    ${logo('Admin panel 🛠')}
-    <section class="card festive">
-      <h2>Game status <span class="pill ${me.game.status}">${started ? 'Started' : 'Draft'}</span></h2>
+    <header class="admin-bar" role="banner">
+      <span><b>🛠 ADMIN</b> · Berlin Mallu Santa</span>
+      <span class="admin-who">${esc(email)} · <button class="link" data-signout>Sign out</button></span>
+    </header>
+    <section class="card">
+      <h2>Game status <span class="pill ${board.game.status}">${started ? 'Started' : 'Draft'}</span></h2>
       <p>${board.participants.filter((p) => !p.isKid).length} adults · ${board.participants.filter((p) => p.isKid).length} kids · ${done} envelopes opened</p>
       <label for="share">Link to share in WhatsApp</label>
       <div class="share">
@@ -35,7 +37,6 @@ export async function adminView() {
       </div>
       <div class="stack" style="margin-top:12px">
         <a class="btn green" style="text-align:center;text-decoration:none" href="https://wa.me/?text=${waText}" target="_blank" rel="noopener">Share on WhatsApp 💬</a>
-        <button class="btn ghost" id="board">Open the status board 👀</button>
       </div>
     </section>
 
@@ -69,7 +70,7 @@ export async function adminView() {
 
     ${
       started
-        ? `${unsealPanel(board, me)}
+        ? `${unsealPanel(board, null)}
     <section class="card">
       <h2>🚨 Emergency unseal</h2>
       <p class="muted">Only if you really need the full list (for example, someone dropped out). ${board.unseal && !board.unseal.unsealedAt ? '' : `It needs approval from ${board.unseal?.quorum ?? 5} participants, and everyone will see the request.`}</p>
@@ -89,8 +90,6 @@ export async function adminView() {
       ${done ? `<p class="error">${done} ${done === 1 ? 'person has' : 'people have'} already opened their envelope. After a restart they get a new Secret Santa.</p>` : ''}
       <label for="reset-word">Type RESET to confirm</label>
       <input id="reset-word" autocomplete="off" autocapitalize="characters" placeholder="RESET" />
-      <label for="reset-pw" style="margin-top:8px">Admin password</label>
-      <input id="reset-pw" type="password" autocomplete="current-password" />
       <p class="error" id="reset-err" hidden></p>
       <div class="stack" style="margin-top:12px">
         <button class="btn ghost" id="redraw" disabled>Redraw (keep the list) 🔄</button>
@@ -98,20 +97,24 @@ export async function adminView() {
       </div>
     </section>
 
+    <section class="card">
+      <h2>📜 Activity log</h2>
+      <p class="muted">The same log everyone sees on the status board.</p>
+      ${eventsHtml(board.events)}
+    </section>
+
     <div class="btn-row">
-      ${me.participant ? '<button class="btn ghost light" id="home">My envelope 🎁</button>' : ''}
       <button class="btn ghost light" id="refresh">Refresh 🔄</button>
     </div>
-    ${footer('<button class="link" id="lock">🔒 Lock the admin panel</button>')}
+    ${footer()}
   `);
 
-  const armed = () => $<HTMLInputElement>('#reset-word').value.trim() === 'RESET' && !!$<HTMLInputElement>('#reset-pw').value;
+  const armed = () => $<HTMLInputElement>('#reset-word').value.trim() === 'RESET';
   const arm = () => {
     $<HTMLButtonElement>('#redraw').disabled = !armed();
     $<HTMLButtonElement>('#wipe').disabled = !armed();
   };
   on('#reset-word', 'input', arm);
-  on('#reset-pw', 'input', arm);
   const reset = (mode: 'redraw' | 'wipe') => async () => {
     const what =
       mode === 'wipe'
@@ -121,7 +124,7 @@ export async function adminView() {
     $('#reset-err').hidden = true;
     try {
       await busy($<HTMLButtonElement>(`#${mode}`), 'Restarting…', () =>
-        api('/admin/reset', { body: { mode, password: $<HTMLInputElement>('#reset-pw').value } }),
+        api('/admin/reset', { body: { mode, confirm: $<HTMLInputElement>('#reset-word').value.trim() } }),
       );
       adminView();
     } catch (e) {
@@ -130,10 +133,6 @@ export async function adminView() {
   };
   on('#redraw', 'click', reset('redraw'));
   on('#wipe', 'click', reset('wipe'));
-  on('#lock', 'click', () => {
-    sessionStorage.removeItem(ADMIN_KEY);
-    go(me.participant ? '#/home' : '#/');
-  });
 
   // The list editor (families → adults/kids, never-match pairs, raw sheet).
   const savedText = draftText(draftFromSaved(list.participants, list.exclusions));
@@ -152,8 +151,6 @@ export async function adminView() {
     await navigator.clipboard?.writeText(shareUrl).catch(() => {});
     $('#copy').textContent = 'Copied!';
   });
-  on('#board', 'click', () => go('#/board'));
-  on('#home', 'click', () => go('#/home'));
   on('#refresh', 'click', () => adminView());
 
   async function saveList() {
@@ -204,7 +201,7 @@ export async function adminView() {
         adminView();
       } catch (e) {
         // Admin session expired: show the password form again.
-        if (e instanceof ApiError && e.adminLocked) return adminView();
+        if (e instanceof ApiError && e.adminLocked) return go('#/admin-login');
         showError('#unlink-err', e);
       }
     }),
@@ -239,7 +236,7 @@ export async function adminView() {
         await busy(b, 'Linking…', () => api('/admin/access-requests/link', { body: { id, participantId: pid, email } }));
         adminView();
       } catch (e) {
-        if (e instanceof ApiError && e.adminLocked) return adminView();
+        if (e instanceof ApiError && e.adminLocked) return go('#/admin-login');
         showError('#req-err', e);
       }
     }),
@@ -251,7 +248,7 @@ export async function adminView() {
         await busy(b, 'Dismissing…', () => api('/admin/access-requests/dismiss', { body: { id: Number(b.dataset.reqDismiss) } }));
         adminView();
       } catch (e) {
-        if (e instanceof ApiError && e.adminLocked) return adminView();
+        if (e instanceof ApiError && e.adminLocked) return go('#/admin-login');
         showError('#req-err', e);
       }
     }),
@@ -394,39 +391,4 @@ function checkNote(check: { ok: boolean; relaxed: string[]; error?: string } | n
   return `<div class="check warn">⚠️ <b>Everyone gets a Secret Santa, but not every rule can be kept:</b>
     <ul>${check.relaxed.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>
     Change the list to keep all rules, or start anyway and confirm.</div>`;
-}
-
-/** Password form. The server checks the password and every admin request; this form is only the way in. */
-function lockScreen(me: Me) {
-  render(`
-    ${logo('Admin panel 🔒')}
-    <section class="card festive">
-      <h2>Enter the admin password</h2>
-      <p class="muted">Every try is shown in the activity log. After 5 wrong tries, wait 15 minutes (20 wrong tries: wait a day).</p>
-      <form id="unlock" class="stack">
-        <input id="pw" type="password" autocomplete="current-password" aria-label="Admin password" required />
-        <p class="error" id="pw-err" hidden></p>
-        <button class="btn" type="submit" id="go">Unlock 🔑</button>
-      </form>
-    </section>
-    <div class="btn-row">
-      ${me.participant ? '<button class="btn ghost light" id="home">Back to my envelope 🎁</button>' : ''}
-    </div>
-    ${footer()}
-  `);
-  $<HTMLInputElement>('#pw').focus();
-  on('#home', 'click', () => go('#/home'));
-  on('#unlock', 'submit', async (ev) => {
-    ev.preventDefault();
-    $('#pw-err').hidden = true;
-    try {
-      const r = await busy($<HTMLButtonElement>('#go'), 'Checking…', () =>
-        api<{ token: string }>('/admin/login', { body: { password: $<HTMLInputElement>('#pw').value } }),
-      );
-      sessionStorage.setItem(ADMIN_KEY, r.token);
-      adminView();
-    } catch (e) {
-      showError('#pw-err', e);
-    }
-  });
 }

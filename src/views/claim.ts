@@ -7,9 +7,6 @@ type SignInCheck = {
   googleName?: string;
   /** The signed-in Google email, to fill in the request form. */
   email?: string;
-  organizer?: boolean;
-  /** Who to ask to be added to the list. */
-  organizerName?: string;
   result?: 'name' | 'taken' | 'ambiguous' | 'none';
   candidate?: { id: number; name: string } | null;
   /** The candidate has an email on the list that was never used: confirming replaces it with this account. */
@@ -25,7 +22,6 @@ export async function claimView() {
   const data = await api<SignInCheck>('/google/match', { method: 'POST', body: {} });
   if (data.claimed) return redirect('#/home');
   const who = `<b>${esc(data.googleName || 'this Google account')}</b>`;
-  const ask = esc(data.organizerName || 'the admin');
   const c = data.candidate;
 
   let request = data.request ?? null;
@@ -34,7 +30,7 @@ export async function claimView() {
     ${why ? `<p>${why}</p>` : ''}
     ${
       request
-        ? `<p class="notice">✅ You asked to be added on ${esc(fmtTime(request.sentAt))}. ${ask} will review it and add you to the list. Then sign in again.</p>`
+        ? `<p class="notice">✅ You asked to be added on ${esc(fmtTime(request.sentAt))}. One of the admins will review it and add you to the list. Then sign in again.</p>`
         : ''
     }
     <div class="stack" style="margin-top:12px">
@@ -45,7 +41,6 @@ export async function claimView() {
     <p class="error" id="err" hidden></p>
     <div class="stack" style="margin-top:12px">
       ${yes && c ? `<button class="btn green" id="yes">Yes, I'm ${esc(c.name)}</button><button class="btn ghost" id="no">No, that's not me</button>` : ''}
-      ${data.organizer ? `<button class="btn" id="admin">Open the admin panel 🛠</button>` : ''}
       ${yes ? '' : '<button class="btn ghost" id="other">Try another Google account</button>'}
     </div>`;
 
@@ -58,7 +53,6 @@ export async function claimView() {
       </section>
       ${footer()}
     `);
-    if (data.organizer) $('#admin').addEventListener('click', () => go('#/admin'));
     if (!yes) {
       $('#other').addEventListener('click', async () => {
         await signOut();
@@ -89,7 +83,7 @@ export async function claimView() {
       ${logo()}
       <section class="card festive">
         <h2>Request access 🙋</h2>
-        <p class="muted">${ask} will review your request and add you to the list. Then sign in again.</p>
+        <p class="muted">One of the admins will review your request and add you to the list. Then sign in again.</p>
         <form id="req-form" class="stack" novalidate>
           <div><label for="rq-first">First name</label><input id="rq-first" autocomplete="given-name" autocapitalize="words" maxlength="60" value="${esc(first)}" required /></div>
           <div><label for="rq-email">Email address</label><input id="rq-email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" maxlength="254" value="${esc(request?.email ?? data.email ?? '')}" required />
@@ -120,7 +114,7 @@ export async function claimView() {
           <section class="card festive center">
             <span class="big-emoji wiggle">🎅</span>
             <h2>Request sent!</h2>
-            <p>${ask} will review it and add you to the list. Then sign in again with <b>${esc(request.email)}</b>.</p>
+            <p>One of the admins will review it and add you to the list. Then sign in again with <b>${esc(request.email)}</b>.</p>
           </section>
           <div class="stack"><button class="btn ghost light" id="other">Try another Google account</button></div>
           ${footer()}

@@ -12,19 +12,27 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Calls the API. Admin paths (/admin/...) send only the admin session; everything else sends only the
+ * participant's Google sign-in. The two are never mixed.
+ */
 export async function api<T = any>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
-  const token = await getToken();
+  const isAdminPath = path.startsWith('/admin/');
+  const auth: Record<string, string> = {};
+  if (isAdminPath) {
+    const s = sessionStorage.getItem(ADMIN_KEY);
+    if (s) auth['X-Admin-Session'] = s;
+  } else {
+    const token = await getToken();
+    if (token) auth.Authorization = `Bearer ${token}`;
+  }
   const res = await fetch(`/api${path}`, {
     method: opts.method ?? (opts.body ? 'POST' : 'GET'),
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(sessionStorage.getItem(ADMIN_KEY) ? { 'X-Admin-Session': sessionStorage.getItem(ADMIN_KEY)! } : {}),
-    },
+    headers: { 'Content-Type': 'application/json', ...auth },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data: any = await res.json().catch(() => ({}));
-  if (data.adminLocked) sessionStorage.removeItem(ADMIN_KEY); // expired or invalid: show the password form again
+  if (data.adminLocked) sessionStorage.removeItem(ADMIN_KEY); // expired, or no longer an admin: sign in again
   if (!res.ok)
     throw new ApiError(data.error ?? `Request failed (${res.status})`, res.status, data.details, data.closed, data.adminLocked);
   return data as T;
@@ -32,11 +40,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 
 export interface Me {
   signedInWith: 'google';
-  /** Unlocked the admin panel with the password (valid admin session). */
-  isAdmin: boolean;
-  /** On ADMIN_EMAILS: may sign in without being on the list. */
-  organizer: boolean;
-  /** Has unlocked the admin panel at some point, so can't approve an unseal. */
+  /** Is or was an admin, so can't approve an unseal. */
   adminEver: boolean;
   participant: { id: number; name: string; revealedAt: string | null } | null;
   needsClaim: boolean;

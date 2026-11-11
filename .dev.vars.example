@@ -1,11 +1,9 @@
 # Local development only. Copy to .dev.vars (git-ignored).
 # DEV_AUTH=1 enables a fake Google sign-in (type a name and email) and ONLY works on localhost.
 DEV_AUTH=1
-ADMIN_EMAILS=dev@example.com
 UNSEAL_QUORUM=2
 # Any 32 random bytes, base64. Generate with: openssl rand -base64 32
 MATCH_KEY=REPLACE_WITH_openssl_rand_-base64_32
 
-# Admin panel password for LOCAL dev only: local-admin-123
-# (set your own with ./scripts/set-admin-password.sh --local)
-ADMIN_PASSWORD_HASH='pbkdf2$100000$hgGycnI6Qd_lZ8m1R3CCIA$ADOkYRCx5PjpluHKh2LPJLx6coKEHclSwotoLm5nhpE'
+# Admins are kept in the local database. Add one, then "Sign in as admin" with that email:
+#   ./scripts/admins.sh add name@gmail.com --local

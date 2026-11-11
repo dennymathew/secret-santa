@@ -5,25 +5,37 @@ const EVENT_TEXT: Record<string, (a: string, d: string) => string> = {
   game_started: (_a, d) => `🎬 The draw started (${d})`,
   revealed: (a, d) => `🎁 ${a} found their Secret Santa${d ? ` (${d})` : ''}`,
   google_claimed: (a, d) => `🔗 ${a} linked a Google account (${d})`,
-  claim_unlocked: (a, d) => `🔓 The admin unlinked ${a}'s Google account (${d})`,
-  admin_linked: (a, d) => `🔗 The admin linked ${a} to a Google account (${d})`,
-  unseal_requested: () => '🚨 The admin asked to unseal all Secret Santas',
+  claim_unlocked: (a, d) => `🔓 An admin unlinked ${a}'s Google account (${d})`,
+  admin_linked: (a, d) => `🔗 An admin linked ${a} to a Google account (${d})`,
+  unseal_requested: () => '🚨 An admin asked to unseal all Secret Santas',
   unseal_approved: (a) => `✋ ${a} approved the unseal`,
-  unsealed: () => '👁 The admin viewed all Secret Santas',
-  admin_unlocked: (a) => `🔑 ${a} unlocked the admin panel`,
+  unsealed: () => '👁 An admin viewed all Secret Santas',
+  admin_unlocked: (a) => `🔑 ${a} signed in to the admin panel`,
   admin_login_failed: (a) => `🚫 Wrong admin password (${a})`,
   game_reset: (a, d) => `🔄 ${a} restarted the game (${d})`,
 };
+
+/** The activity log: the same on the status board and in the admin panel. */
+export function eventsHtml(events: Board['events']): string {
+  return `<ul class="events">${
+    events
+      .map((e) => {
+        const t = EVENT_TEXT[e.type]?.(esc(e.actor_name ?? ''), esc(e.detail ?? '')) ?? esc(e.type);
+        return `<li><time>${esc(fmtTime(e.ts))}</time><span>${t}</span></li>`;
+      })
+      .join('') || '<li class="muted">Nothing yet.</li>'
+  }</ul>`;
+}
 
 export function unsealPanel(b: Board, me: Me | null) {
   const u = b.unseal;
   if (!u) return '';
   const pct = Math.min(100, Math.round((u.approvals.length / u.quorum) * 100));
   const iApproved = u.approvals.some((a) => a.id === b.me);
-  const canApprove = !!me?.participant && !me.isAdmin && !me.adminEver && !iApproved && !u.unsealedAt;
+  const canApprove = !!me?.participant && !me.adminEver && !iApproved && !u.unsealedAt;
   return `<section class="card">
     <h2>🚨 Unseal request</h2>
-    <p>The admin asked to see <b>all</b> Secret Santas (for example, because someone dropped out). This only works once
+    <p>An admin asked to see <b>all</b> Secret Santas (for example, because someone dropped out). This only works once
       <b>${u.quorum}</b> participants approve.</p>
     <div class="progress" aria-label="Approvals"><div style="width:${pct}%"></div></div>
     <p class="muted">${u.approvals.length} / ${u.quorum} approvals${u.approvals.length ? `: ${u.approvals.map((a) => esc(a.name)).join(', ')}` : ''}</p>
@@ -53,7 +65,7 @@ export async function boardView() {
   const kids = b.participants.filter((p) => p.isKid);
 
   render(`
-    ${logo('Everyone sees exactly this, the admin too 👀')}
+    ${logo('Everyone sees exactly this, the admins too 👀')}
     <section class="card festive">
       <h2>Who has found their Secret Santa?</h2>
       <div class="progress" aria-label="Progress"><div style="width:${pct}%"></div></div>
@@ -65,27 +77,19 @@ export async function boardView() {
     ${unsealPanel(b, me)}
     <section class="card">
       <h2>📜 Activity log</h2>
-      <ul class="events">
-        ${b.events
-          .map((e) => {
-            const t = EVENT_TEXT[e.type]?.(esc(e.actor_name ?? ''), esc(e.detail ?? '')) ?? esc(e.type);
-            return `<li><time>${esc(fmtTime(e.ts))}</time><span>${t}</span></li>`;
-          })
-          .join('') || '<li class="muted">Nothing yet.</li>'}
-      </ul>
+      ${eventsHtml(b.events)}
     </section>
     <div class="btn-row">
       <button class="btn ghost light" id="refresh">Refresh 🔄</button>
       <button class="btn ghost light" id="back">Back</button>
     </div>
-    ${footer('<button class="link" id="admin">🛠 Admin</button>')}
+    ${footer()}
   `);
-  on('#admin', 'click', () => go('#/admin'));
 
   on('#refresh', 'click', () => boardView());
-  on('#back', 'click', () => go(me.participant ? '#/home' : '#/admin'));
+  on('#back', 'click', () => go('#/home'));
   on('#approve', 'click', async () => {
-    if (!confirm('Approve letting the admin see ALL Secret Santas?')) return;
+    if (!confirm('Approve letting the admins see ALL Secret Santas?')) return;
     try {
       await api('/unseal/approve', { method: 'POST' });
       boardView();

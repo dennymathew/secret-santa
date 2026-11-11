@@ -12,14 +12,11 @@ migrations_dir = "migrations"
 [vars]
 # Your Firebase project id (Project settings → General)
 FIREBASE_PROJECT_ID = "secretsantaberlinmallus"
-# ADMIN_EMAILS (who may sign in before being on the list) is set as a secret, so it stays out of git:
-#   npx wrangler pages secret put ADMIN_EMAILS --project-name berlinmallusanta --env production
+# Admins are kept in the database (admins table): ./scripts/admins.sh add you@gmail.com
 # After this moment the site is closed
 GAME_ENDS_AT = "2026-12-12T00:00:00+01:00"
 # Approvals needed before the admin can see all matches
 UNSEAL_QUORUM = "5"
-# Who people should ask to be added to the list (claim screen)
-ORGANIZER_NAME = "Denny"
 
 # ---------------------------------------------------------------------------
 # TEST SITE = every Cloudflare Pages *preview* deployment (any branch except main),
@@ -27,7 +24,7 @@ ORGANIZER_NAME = "Denny"
 # It has its OWN database, so testing never touches the real game.
 # Sign-in is a fake Google prompt (type any name/email). TEST_MODE is ignored on main.
 # Pages doesn't inherit vars/bindings into environments, so everything is repeated here.
-# Secrets (MATCH_KEY, ADMIN_PASSWORD_HASH, ADMIN_EMAILS) must be set for preview too: see README.
+# The secret MATCH_KEY must be set for preview too, and admins added with ./scripts/admins.sh --preview: see README.
 # ---------------------------------------------------------------------------
 [env.preview]
 
@@ -43,4 +40,3 @@ TEST_MODE = "1"
 FIREBASE_PROJECT_ID = "secretsantaberlinmallus"
 GAME_ENDS_AT = "2026-12-12T00:00:00+01:00"
 UNSEAL_QUORUM = "5"
-ORGANIZER_NAME = "Denny"

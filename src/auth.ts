@@ -15,6 +15,9 @@ export let DEV_MODE = !cfg.apiKey;
 export let TEST_SITE = false;
 const DEV_KEY = 'bms-dev-token';
 export const ADMIN_KEY = 'bms-admin-session';
+const ADMIN_EMAIL_KEY = 'bms-admin-email';
+const ADMIN_ERROR = 'bms-admin-error';
+const AFTER_GOOGLE = 'bms-after-google';
 
 let auth: Auth | null = null;
 let fb: typeof import('firebase/auth') | null = null;
@@ -60,15 +63,20 @@ export async function isSignedIn() {
   return !!(await getToken());
 }
 
-export async function googleSignIn(): Promise<void> {
+/**
+ * Google sign-in. `as: 'admin'` is the separate admin sign-in: after Google, the account is exchanged for an
+ * admin session (see finishAdminSignIn) and the Google sign-in itself is dropped again.
+ */
+export async function googleSignIn(as: 'participant' | 'admin' = 'participant'): Promise<void> {
+  sessionStorage.setItem(AFTER_GOOGLE, as);
   if (DEV_MODE) {
     const label = TEST_SITE ? 'TEST SITE' : 'DEV MODE';
-    const name = prompt(`${label}: Google account name`, 'Anu Mary Kurian');
+    const name = prompt(`${label}: Google account name`, 'Firstname Lastname');
     if (!name) return;
-    const email = prompt(`${label}: Google email`, `${name.split(' ')[0].toLowerCase()}@gmail.com`);
+    const email = prompt(`${label}: Google email`, 'name@gmail.com');
     if (!email) return;
     sessionStorage.setItem(DEV_KEY, `dev-google:${email}|${name}`);
-    location.hash = '#/home';
+    location.hash = as === 'admin' ? '#/admin' : '#/home';
     location.reload();
     return;
   }
@@ -76,8 +84,44 @@ export async function googleSignIn(): Promise<void> {
   const provider = new fb.GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
   // Redirect works better than popups inside WhatsApp's in-app browser.
-  sessionStorage.setItem('bms-after-google', '1');
   await fb.signInWithRedirect(auth, provider);
+}
+
+/** Which sign-in just came back from Google, if any ('participant' or 'admin'). Read once. */
+export function takeAfterGoogle(): 'participant' | 'admin' | null {
+  const v = sessionStorage.getItem(AFTER_GOOGLE);
+  sessionStorage.removeItem(AFTER_GOOGLE);
+  return v === 'admin' || v === 'participant' ? v : null;
+}
+
+/** Signed in to the admin panel (an admin session, not a participant sign-in). */
+export const isAdminSignedIn = () => !!sessionStorage.getItem(ADMIN_KEY);
+export const adminEmail = () => sessionStorage.getItem(ADMIN_EMAIL_KEY) ?? '';
+
+/**
+ * Turns the Google sign-in that just happened into an admin session, then drops the Google sign-in,
+ * so this browser is signed in as admin only (never as a participant at the same time).
+ */
+export async function finishAdminSignIn(): Promise<void> {
+  const token = await getToken();
+  try {
+    if (!token) throw new Error('Google sign-in was cancelled. Please try again.');
+    const res = await fetch('/api/admin/login', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const data = (await res.json().catch(() => ({}))) as { token?: string; email?: string; error?: string };
+    if (!res.ok || !data.token) throw new Error(data.error ?? `Admin sign-in failed (${res.status}).`);
+    sessionStorage.setItem(ADMIN_KEY, data.token);
+    sessionStorage.setItem(ADMIN_EMAIL_KEY, data.email ?? '');
+  } catch (e) {
+    sessionStorage.setItem(ADMIN_ERROR, e instanceof Error ? e.message : String(e));
+  } finally {
+    await signOutGoogle();
+  }
+}
+
+export function takeAdminError(): string | null {
+  const e = sessionStorage.getItem(ADMIN_ERROR);
+  sessionStorage.removeItem(ADMIN_ERROR);
+  return e;
 }
 
 export function takeGoogleError(): string | null {
@@ -86,10 +130,16 @@ export function takeGoogleError(): string | null {
   return e;
 }
 
-export async function signOut() {
+async function signOutGoogle() {
   sessionStorage.removeItem(DEV_KEY);
-  sessionStorage.removeItem(ADMIN_KEY);
   if (auth && fb) await fb.signOut(auth);
+}
+
+/** Signs out completely: the participant sign-in and the admin session. */
+export async function signOut() {
+  sessionStorage.removeItem(ADMIN_KEY);
+  sessionStorage.removeItem(ADMIN_EMAIL_KEY);
+  await signOutGoogle();
 }
 
 function friendlyError(e: unknown): string {
