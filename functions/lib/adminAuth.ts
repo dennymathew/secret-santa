@@ -83,29 +83,3 @@ export async function verifySession(
     return false;
   }
 }
-
-// ---------- Who may unlock the admin panel, and with which password ----------
-// Personal admin passwords: one secret per admin, named ADMIN_PW_<anything> (scripts/set-admin-password.sh
-// --email names it after the email), with the value "<email>|<hash>". Each admin has their own password.
-// ADMIN_PASSWORD_HASH (the older shared password) still works for anyone on the list who has no personal one;
-// delete that secret to let only the named admins in.
-const PERSONAL_PREFIX = 'ADMIN_PW_';
-
-/** email → password hash, from the ADMIN_PW_* secrets. */
-export function personalAdminHashes(env: object): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const [key, value] of Object.entries(env)) {
-    if (!key.startsWith(PERSONAL_PREFIX) || typeof value !== 'string') continue;
-    const bar = value.indexOf('|');
-    if (bar < 1) continue;
-    const email = value.slice(0, bar).trim().toLowerCase();
-    const hash = value.slice(bar + 1).trim();
-    if (email && hash) out.set(email, hash);
-  }
-  return out;
-}
-
-/** The password hash this person unlocks the admin panel with: their own, else the shared one (if set). */
-export function adminHashFor(env: object & { ADMIN_PASSWORD_HASH?: string }, email: string): string | undefined {
-  return personalAdminHashes(env).get(email.trim().toLowerCase()) ?? (env.ADMIN_PASSWORD_HASH?.trim() || undefined);
-}
